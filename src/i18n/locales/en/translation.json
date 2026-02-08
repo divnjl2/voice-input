@@ -134,6 +134,10 @@
           "transcribe_with_post_process": {
             "name": "Post-Processing Hotkey",
             "description": "Optional: A dedicated hotkey that always applies AI post-processing to your transcription."
+          },
+          "toggle_settings": {
+            "name": "Toggle Settings",
+            "description": "Shows or hides the settings window from anywhere."
           }
         },
         "errors": {

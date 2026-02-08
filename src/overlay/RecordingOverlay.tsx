@@ -28,6 +28,11 @@ const RecordingOverlay: React.FC = () => {
         // Sync language from settings each time overlay is shown
         await syncLanguageFromSettings();
         const overlayState = event.payload as OverlayState;
+        // Reset levels when starting a new recording to avoid stale visualizer data
+        if (overlayState === "recording") {
+          smoothedLevelsRef.current = Array(16).fill(0);
+          setLevels(Array(9).fill(0));
+        }
         setState(overlayState);
         setIsVisible(true);
       });
@@ -35,6 +40,10 @@ const RecordingOverlay: React.FC = () => {
       // Listen for hide-overlay event from Rust
       const unlistenHide = await listen("hide-overlay", () => {
         setIsVisible(false);
+        // Reset state to recording so next show starts clean
+        setState("recording");
+        smoothedLevelsRef.current = Array(16).fill(0);
+        setLevels(Array(9).fill(0));
       });
 
       // Listen for mic-level updates

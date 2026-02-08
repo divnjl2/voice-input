@@ -432,6 +432,34 @@ impl ShortcutAction for TranscribeAction {
     }
 }
 
+// Toggle Settings Window Action
+struct ToggleSettingsAction;
+
+impl ShortcutAction for ToggleSettingsAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        if let Some(main_window) = app.get_webview_window("main") {
+            if main_window.is_visible().unwrap_or(false) {
+                let _ = main_window.hide();
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                }
+            } else {
+                let _ = main_window.show();
+                let _ = main_window.set_focus();
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+                }
+            }
+        }
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        // Nothing to do on stop for toggle settings
+    }
+}
+
 // Cancel Action
 struct CancelAction;
 
@@ -480,6 +508,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     map.insert(
         "transcribe_with_post_process".to_string(),
         Arc::new(TranscribeAction { post_process: true }) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "toggle_settings".to_string(),
+        Arc::new(ToggleSettingsAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "cancel".to_string(),

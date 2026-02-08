@@ -582,6 +582,25 @@ pub fn get_default_settings() -> AppSettings {
             current_binding: default_post_process_shortcut.to_string(),
         },
     );
+    #[cfg(target_os = "windows")]
+    let default_toggle_settings_shortcut = "ctrl+alt+h";
+    #[cfg(target_os = "macos")]
+    let default_toggle_settings_shortcut = "option+cmd+h";
+    #[cfg(target_os = "linux")]
+    let default_toggle_settings_shortcut = "ctrl+alt+h";
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    let default_toggle_settings_shortcut = "ctrl+alt+h";
+
+    bindings.insert(
+        "toggle_settings".to_string(),
+        ShortcutBinding {
+            id: "toggle_settings".to_string(),
+            name: "Toggle Settings".to_string(),
+            description: "Shows or hides the settings window.".to_string(),
+            default_binding: default_toggle_settings_shortcut.to_string(),
+            current_binding: default_toggle_settings_shortcut.to_string(),
+        },
+    );
     bindings.insert(
         "cancel".to_string(),
         ShortcutBinding {

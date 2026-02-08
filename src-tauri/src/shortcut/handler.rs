@@ -50,6 +50,14 @@ pub fn handle_shortcut_event(
         return;
     }
 
+    // Toggle settings: fire on press only, ignore PTT mode
+    if binding_id == "toggle_settings" {
+        if is_pressed {
+            action.start(app, binding_id, hotkey_string);
+        }
+        return;
+    }
+
     // Push-to-talk mode: start on press, stop on release
     if settings.push_to_talk {
         if is_pressed {

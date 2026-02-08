@@ -16,6 +16,58 @@ use std::time::{Duration, Instant};
 use tar::Archive;
 use tauri::{AppHandle, Emitter, Manager};
 
+/// On Windows, converts a path to its short (8.3) form if it contains non-ASCII characters.
+/// This works around C/C++ libraries (whisper.cpp, ONNX Runtime) that don't handle Unicode paths.
+#[cfg(target_os = "windows")]
+fn to_safe_model_path(path: &std::path::Path) -> PathBuf {
+    use std::os::windows::ffi::OsStrExt;
+
+    // Check if path contains non-ASCII characters
+    let path_str = path.to_string_lossy();
+    if path_str.is_ascii() {
+        return path.to_path_buf();
+    }
+
+    info!(
+        "Model path contains non-ASCII characters, converting to short path: {:?}",
+        path
+    );
+
+    // Convert to wide string for Win32 API
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+
+    unsafe {
+        use windows::Win32::Storage::FileSystem::GetShortPathNameW;
+        use windows::core::PCWSTR;
+
+        // First call to get required buffer size
+        let len = GetShortPathNameW(PCWSTR(wide.as_ptr()), None);
+        if len == 0 {
+            warn!("GetShortPathNameW failed, using original path");
+            return path.to_path_buf();
+        }
+
+        let mut buf = vec![0u16; len as usize];
+        let result = GetShortPathNameW(PCWSTR(wide.as_ptr()), Some(&mut buf));
+        if result == 0 || result > len {
+            warn!("GetShortPathNameW failed on second call, using original path");
+            return path.to_path_buf();
+        }
+
+        // Trim null terminator and convert back
+        let short_path =
+            String::from_utf16_lossy(&buf[..result as usize]);
+        let short = PathBuf::from(short_path);
+        info!("Converted to short path: {:?}", short);
+        short
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn to_safe_model_path(path: &std::path::Path) -> PathBuf {
+    path.to_path_buf()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub enum EngineType {
     Whisper,
@@ -852,7 +904,8 @@ impl ModelManager {
         if model_info.is_directory {
             // For directory-based models, ensure the directory exists and is complete
             if model_path.exists() && model_path.is_dir() && !partial_path.exists() {
-                Ok(model_path)
+                // Convert to safe path for ML engines that can't handle Unicode
+                Ok(to_safe_model_path(&model_path))
             } else {
                 Err(anyhow::anyhow!(
                     "Complete model directory not found: {}",
@@ -862,7 +915,8 @@ impl ModelManager {
         } else {
             // For file-based models (existing logic)
             if model_path.exists() && !partial_path.exists() {
-                Ok(model_path)
+                // Convert to safe path for ML engines that can't handle Unicode
+                Ok(to_safe_model_path(&model_path))
             } else {
                 Err(anyhow::anyhow!(
                     "Complete model file not found: {}",
