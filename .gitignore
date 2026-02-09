@@ -34,3 +34,7 @@ recording_*
 playwright-report/
 test-results/
 blob-report/
+
+# Windows artifacts
+nul
+build.bat
