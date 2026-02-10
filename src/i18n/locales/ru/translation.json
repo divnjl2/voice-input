@@ -4,7 +4,8 @@
     "checkUpdates": "Проверить обновления...",
     "copyLastTranscript": "Скопировать последнюю транскрипцию",
     "quit": "Выход",
-    "cancel": "Отмена"
+    "cancel": "Отмена",
+    "showHide": "Показать/Скрыть окно"
   },
   "sidebar": {
     "general": "Общие",
@@ -61,7 +62,7 @@
     },
     "permissions": {
       "title": "Требуются разрешения",
-      "description": "Handy требуются некоторые разрешения для корректной работы.",
+      "description": "Voice Input требуются некоторые разрешения для корректной работы.",
       "microphone": {
         "title": "Доступ к микрофону",
         "description": "Необходим для прослушивания вашего голоса для транскрипции."
@@ -134,7 +135,7 @@
     "general": {
       "title": "Общие",
       "shortcut": {
-        "title": "Ярлыки Handy",
+        "title": "Горячие клавиши Voice Input",
         "description": "Настройте сочетания клавиш для запуска записи речи в текст",
         "loading": "Загрузка ярлыков...",
         "none": "Ярлыки не настроены",
@@ -219,7 +220,7 @@
       },
       "autostart": {
         "label": "Запуск при запуске",
-        "description": "Автоматически запускать Handy при входе в систему."
+        "description": "Автоматически запускать Voice Input при входе в систему."
       },
       "overlay": {
         "title": "Позиция наложения",
@@ -359,7 +360,7 @@
       },
       "updateChecks": {
         "label": "Проверять обновления",
-        "description": "Автоматически проверять наличие новых версий Handy"
+        "description": "Автоматически проверять наличие новых версий Voice Input"
       },
       "soundTheme": {
         "label": "Звуковая тема",
@@ -423,11 +424,11 @@
       "title": "О программе",
       "version": {
         "title": "Версия",
-        "description": "Текущая версия Handy"
+        "description": "Текущая версия Voice Input"
       },
       "appDataDirectory": {
         "title": "Каталог данных приложения",
-        "description": "Место, где Handy хранит свои данные"
+        "description": "Место, где Voice Input хранит свои данные"
       },
       "sourceCode": {
         "title": "Исходный код",
@@ -436,7 +437,7 @@
       },
       "supportDevelopment": {
         "title": "Поддержка развития",
-        "description": "Помогите нам продолжить создание Handy",
+        "description": "Помогите нам продолжить создание Voice Input",
         "button": "Пожертвовать"
       },
       "acknowledgments": {
@@ -444,7 +445,7 @@
         "whisper": {
           "title": "Whisper.cpp",
           "description": "Высокопроизводительный вывод модели автоматического распознавания речи OpenAI Whisper",
-          "details": "Handy использует Whisper.cpp для быстрой локальной обработки речи в текст. Спасибо великолепной работе Георгия Герганова и его участников."
+          "details": "Voice Input использует Whisper.cpp для быстрой локальной обработки речи в текст. Спасибо великолепной работе Георгия Герганова и его участников."
         }
       }
     }
@@ -487,7 +488,7 @@
   },
   "accessibility": {
     "permissionsRequired": "Требуются разрешения на доступ",
-    "permissionsDescription": "Handy необходимы разрешения на доступ для ввода расшифрованного текста.",
+    "permissionsDescription": "Voice Input необходимы разрешения на доступ для ввода расшифрованного текста.",
     "openSettings": "Открыть настройки системы",
     "dismiss": "Закрыть"
   },
@@ -496,7 +497,7 @@
   },
   "appLanguage": {
     "title": "Язык приложения",
-    "description": "Изменить язык интерфейса Handy"
+    "description": "Изменить язык интерфейса Voice Input"
   },
   "overlay": {
     "transcribing": "Расшифровка..."

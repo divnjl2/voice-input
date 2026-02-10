@@ -93,9 +93,9 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
 
     // Create common menu items
     let version_label = if cfg!(debug_assertions) {
-        format!("Handy v{} (Dev)", env!("CARGO_PKG_VERSION"))
+        format!("Voice Input v{} (Dev)", env!("CARGO_PKG_VERSION"))
     } else {
-        format!("Handy v{}", env!("CARGO_PKG_VERSION"))
+        format!("Voice Input v{}", env!("CARGO_PKG_VERSION"))
     };
     let version_i = MenuItem::with_id(app, "version", &version_label, false, None::<&str>)
         .expect("failed to create version item");
@@ -125,6 +125,9 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
     .expect("failed to create copy last transcript item");
     let quit_i = MenuItem::with_id(app, "quit", &strings.quit, true, quit_accelerator)
         .expect("failed to create quit item");
+    let show_hide_i =
+        MenuItem::with_id(app, "show_hide", &strings.show_hide, true, None::<&str>)
+            .expect("failed to create show/hide item");
     let separator = || PredefinedMenuItem::separator(app).expect("failed to create separator");
 
     let menu = match state {
@@ -136,6 +139,7 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
                 &[
                     &version_i,
                     &separator(),
+                    &show_hide_i,
                     &cancel_i,
                     &separator(),
                     &copy_last_transcript_i,
@@ -152,6 +156,8 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
             app,
             &[
                 &version_i,
+                &separator(),
+                &show_hide_i,
                 &separator(),
                 &copy_last_transcript_i,
                 &separator(),

@@ -172,6 +172,20 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         .show_menu_on_left_click(true)
         .icon_as_template(true)
         .on_menu_event(|app, event| match event.id.as_ref() {
+            "show_hide" => {
+                if let Some(main_window) = app.get_webview_window("main") {
+                    if main_window.is_visible().unwrap_or(false) {
+                        let _ = main_window.hide();
+                        #[cfg(target_os = "macos")]
+                        {
+                            let _ = app
+                                .set_activation_policy(tauri::ActivationPolicy::Accessory);
+                        }
+                    } else {
+                        show_main_window(app);
+                    }
+                }
+            }
             "settings" => {
                 show_main_window(app);
             }
@@ -348,7 +362,7 @@ pub fn run() {
                     }),
                     // File logs respect the user's settings (stored in FILE_LOG_LEVEL atomic)
                     Target::new(TargetKind::LogDir {
-                        file_name: Some("handy".into()),
+                        file_name: Some("voice-input".into()),
                     })
                     .filter(|metadata| {
                         let file_level = FILE_LOG_LEVEL.load(Ordering::Relaxed);
