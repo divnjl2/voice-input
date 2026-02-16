@@ -16,6 +16,7 @@ mod signal_handle;
 mod tray;
 mod tray_i18n;
 mod utils;
+pub mod voice_commands;
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri_specta::{collect_commands, Builder};
 
@@ -287,6 +288,7 @@ pub fn run() {
         shortcut::change_update_checks_setting,
         shortcut::change_keyboard_implementation_setting,
         shortcut::get_keyboard_implementation,
+        shortcut::change_voice_commands_setting,
         shortcut::handy_keys::start_handy_keys_recording,
         shortcut::handy_keys::stop_handy_keys_recording,
         trigger_update_check,

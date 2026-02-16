@@ -4,7 +4,7 @@
   "version": "0.8.0",
   "identifier": "com.divnjl2.voice-input",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "",
     "frontendDist": "../dist"
@@ -70,5 +70,9 @@
     }
   },
   "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/cjpais/Handy/releases/latest/download/latest.json"],
+      "pubkey": ""
+    }
   }
 }

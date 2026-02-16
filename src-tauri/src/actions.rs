@@ -8,11 +8,13 @@ use crate::settings::{get_settings, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID}
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
 use crate::utils::{self, show_recording_overlay, show_transcribing_overlay};
+use crate::voice_commands::{self, KeyAction, VoiceAction, VoiceCommandResult};
 use crate::ManagedToggleState;
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
-use log::{debug, error};
+use log::{debug, error, info};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::AppHandle;
@@ -27,6 +29,9 @@ pub trait ShortcutAction: Send + Sync {
 // Transcribe Action
 struct TranscribeAction {
     post_process: bool,
+    streaming_active: Arc<AtomicBool>,
+    streaming_prev_len: Arc<std::sync::Mutex<usize>>,
+    streaming_handle: Arc<std::sync::Mutex<Option<std::thread::JoinHandle<()>>>>,
 }
 
 async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
@@ -208,6 +213,236 @@ async fn maybe_convert_chinese_variant(
     }
 }
 
+/// Execute a voice command by simulating key presses via Enigo.
+/// Returns Ok(true) if a command was executed, Ok(false) if it was a TypeText action
+/// that should be pasted instead.
+fn execute_voice_command(app: &AppHandle, action: &VoiceAction) -> Result<(), String> {
+    use crate::input::EnigoState;
+    use enigo::{Direction, Key, Keyboard};
+
+    // Release any held modifiers before executing voice commands
+    release_all_modifiers(app);
+
+    let enigo_state = app
+        .try_state::<EnigoState>()
+        .ok_or("Enigo state not initialized")?;
+    let mut enigo = enigo_state
+        .0
+        .lock()
+        .map_err(|e| format!("Failed to lock Enigo: {}", e))?;
+
+    fn key_action_to_enigo(ka: &KeyAction) -> Key {
+        match ka {
+            KeyAction::Enter => Key::Return,
+            KeyAction::Backspace => Key::Backspace,
+            KeyAction::Delete => Key::Delete,
+            KeyAction::Tab => Key::Tab,
+            KeyAction::Escape => Key::Escape,
+            KeyAction::Space => Key::Space,
+            KeyAction::Up => Key::UpArrow,
+            KeyAction::Down => Key::DownArrow,
+            KeyAction::Left => Key::LeftArrow,
+            KeyAction::Right => Key::RightArrow,
+            KeyAction::Home => Key::Home,
+            KeyAction::End => Key::End,
+            KeyAction::PageUp => Key::PageUp,
+            KeyAction::PageDown => Key::PageDown,
+            KeyAction::Control => Key::Control,
+            KeyAction::Shift => Key::Shift,
+            KeyAction::Alt => Key::Alt,
+            KeyAction::Key(c) => Key::Unicode(*c),
+        }
+    }
+
+    match action {
+        VoiceAction::KeyPress(key) => {
+            let k = key_action_to_enigo(key);
+            enigo
+                .key(k, Direction::Click)
+                .map_err(|e| format!("Failed to press key: {}", e))?;
+        }
+        VoiceAction::KeyCombo(keys) => {
+            // Separate modifiers from regular keys
+            let mut modifiers = Vec::new();
+            let mut regular_keys = Vec::new();
+            for key in keys {
+                match key {
+                    KeyAction::Control | KeyAction::Shift | KeyAction::Alt => {
+                        modifiers.push(key_action_to_enigo(key));
+                    }
+                    _ => {
+                        regular_keys.push(key_action_to_enigo(key));
+                    }
+                }
+            }
+
+            // Press modifiers
+            for m in &modifiers {
+                enigo
+                    .key(*m, Direction::Press)
+                    .map_err(|e| format!("Failed to press modifier: {}", e))?;
+            }
+
+            // Click regular keys
+            for k in &regular_keys {
+                enigo
+                    .key(*k, Direction::Click)
+                    .map_err(|e| format!("Failed to click key: {}", e))?;
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
+
+            // Release modifiers in reverse order
+            for m in modifiers.iter().rev() {
+                enigo
+                    .key(*m, Direction::Release)
+                    .map_err(|e| format!("Failed to release modifier: {}", e))?;
+            }
+        }
+        VoiceAction::TypeText(text) => {
+            enigo
+                .text(text)
+                .map_err(|e| format!("Failed to type text: {}", e))?;
+        }
+    }
+
+    Ok(())
+}
+
+const WHISPER_SAMPLE_RATE: usize = 16000;
+
+/// Release all modifier keys (Ctrl, Shift, Alt) to prevent them from
+/// interfering with Enigo text input. This is critical when the user triggers
+/// recording via a hotkey like Ctrl+D — the Ctrl key may still be physically
+/// held when the streaming loop starts typing, causing Ctrl+Backspace or
+/// Ctrl+letter combos instead of plain text.
+fn release_all_modifiers(app: &AppHandle) {
+    use crate::input::EnigoState;
+    use enigo::{Direction, Key, Keyboard};
+
+    if let Some(enigo_state) = app.try_state::<EnigoState>() {
+        if let Ok(mut enigo) = enigo_state.0.lock() {
+            let _ = enigo.key(Key::Control, Direction::Release);
+            let _ = enigo.key(Key::Shift, Direction::Release);
+            let _ = enigo.key(Key::Alt, Direction::Release);
+        }
+    }
+}
+
+fn erase_chars(app: &AppHandle, count: usize) {
+    use crate::input::EnigoState;
+    use enigo::{Direction, Key, Keyboard};
+
+    if count == 0 {
+        return;
+    }
+    release_all_modifiers(app);
+    if let Some(enigo_state) = app.try_state::<EnigoState>() {
+        if let Ok(mut enigo) = enigo_state.0.lock() {
+            for _ in 0..count {
+                let _ = enigo.key(Key::Backspace, Direction::Click);
+            }
+        }
+    }
+}
+
+fn type_text(app: &AppHandle, text: &str) {
+    use crate::input::EnigoState;
+    use enigo::Keyboard;
+
+    release_all_modifiers(app);
+    if let Some(enigo_state) = app.try_state::<EnigoState>() {
+        if let Ok(mut enigo) = enigo_state.0.lock() {
+            let _ = enigo.text(text);
+        }
+    }
+}
+
+fn streaming_transcription_loop(
+    active: Arc<AtomicBool>,
+    prev_len: Arc<std::sync::Mutex<usize>>,
+    app: AppHandle,
+) {
+    info!("Streaming loop: started, waiting for audio to accumulate");
+
+    // Wait for model to be ready + audio to accumulate (~2s)
+    // Check flag every 50ms so we can exit quickly if recording stops
+    for i in 0..40 {
+        if !active.load(Ordering::SeqCst) {
+            info!("Streaming loop: cancelled during initial delay (after {}ms)", i * 50);
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    info!("Streaming loop: entering main loop");
+
+    while active.load(Ordering::SeqCst) {
+        let rm = app.state::<Arc<AudioRecordingManager>>();
+        let samples = rm.peek_samples();
+
+        if let Some(samples) = samples {
+            let sample_count = samples.len();
+            // Only transcribe if we have at least 0.5s of audio
+            if sample_count > WHISPER_SAMPLE_RATE / 2 {
+                debug!(
+                    "Streaming loop: peeked {} samples ({:.1}s), transcribing...",
+                    sample_count,
+                    sample_count as f64 / WHISPER_SAMPLE_RATE as f64
+                );
+                let tm = app.state::<Arc<TranscriptionManager>>();
+                match tm.transcribe_partial(samples) {
+                    Ok(text) => {
+                        if !text.is_empty() {
+                            let mut prev = prev_len.lock().unwrap();
+                            debug!(
+                                "Streaming loop: got '{}', erasing {} prev chars",
+                                text,
+                                *prev
+                            );
+                            erase_chars(&app, *prev);
+                            if *prev > 0 {
+                                std::thread::sleep(std::time::Duration::from_millis(30));
+                            }
+                            type_text(&app, &text);
+                            *prev = text.chars().count();
+                        } else {
+                            debug!("Streaming loop: transcription returned empty");
+                        }
+                    }
+                    Err(e) => {
+                        info!("Streaming loop: transcription error: {}", e);
+                    }
+                }
+            } else {
+                debug!("Streaming loop: only {} samples, too short", sample_count);
+            }
+        } else {
+            debug!("Streaming loop: peek returned None");
+        }
+
+        // Wait before next peek (~800ms in 50ms increments for fast exit)
+        for _ in 0..16 {
+            if !active.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
+    // Clean up: erase any remaining partial text before exiting
+    let prev = {
+        let mut p = prev_len.lock().unwrap();
+        let val = *p;
+        *p = 0;
+        val
+    };
+    if prev > 0 {
+        info!("Streaming loop: erasing {} chars on exit", prev);
+        erase_chars(&app, prev);
+    }
+    info!("Streaming loop: exited");
+}
+
 impl ShortcutAction for TranscribeAction {
     fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         let start_time = Instant::now();
@@ -270,6 +505,17 @@ impl ShortcutAction for TranscribeAction {
         if recording_started {
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
+
+            // Start streaming transcription loop
+            self.streaming_active.store(true, Ordering::SeqCst);
+            *self.streaming_prev_len.lock().unwrap() = 0;
+            let streaming_flag = self.streaming_active.clone();
+            let prev_len = self.streaming_prev_len.clone();
+            let app_clone = app.clone();
+            let handle = std::thread::spawn(move || {
+                streaming_transcription_loop(streaming_flag, prev_len, app_clone);
+            });
+            *self.streaming_handle.lock().unwrap() = Some(handle);
         }
 
         debug!(
@@ -279,6 +525,11 @@ impl ShortcutAction for TranscribeAction {
     }
 
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
+        // Signal the streaming loop to stop (non-blocking)
+        self.streaming_active.store(false, Ordering::SeqCst);
+        // Take the join handle so the async task can wait for it
+        let streaming_join = self.streaming_handle.lock().unwrap().take();
+
         // Unregister the cancel shortcut when transcription stops
         shortcut::unregister_cancel_shortcut(app);
 
@@ -308,6 +559,15 @@ impl ShortcutAction for TranscribeAction {
                 "Starting async transcription task for binding: {}",
                 binding_id
             );
+
+            // Wait for streaming loop to finish erasing its text before we proceed
+            if let Some(handle) = streaming_join {
+                info!("Waiting for streaming loop to finish...");
+                let _ = handle.join();
+                info!("Streaming loop finished");
+                // Small delay after erase so the input field processes the backspaces
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
 
             let stop_recording_time = Instant::now();
             if let Some(samples) = rm.stop_recording(&binding_id) {
@@ -382,26 +642,95 @@ impl ShortcutAction for TranscribeAction {
                                 }
                             });
 
-                            // Paste the final text (either processed or original)
+                            // Check if the final text is a voice command
+                            let settings_for_vc = get_settings(&ah);
+                            let voice_commands_enabled =
+                                settings_for_vc.voice_commands_enabled;
+
                             let ah_clone = ah.clone();
                             let paste_time = Instant::now();
-                            ah.run_on_main_thread(move || {
-                                match utils::paste(final_text, ah_clone.clone()) {
-                                    Ok(()) => debug!(
-                                        "Text pasted successfully in {:?}",
-                                        paste_time.elapsed()
-                                    ),
-                                    Err(e) => error!("Failed to paste transcription: {}", e),
+
+                            if voice_commands_enabled {
+                                match voice_commands::check_voice_command(&final_text) {
+                                    VoiceCommandResult::Command(cmd) => {
+                                        info!(
+                                            "Executing voice command: {} (from '{}')",
+                                            cmd.description, final_text
+                                        );
+                                        let action = cmd.action.clone();
+                                        ah.run_on_main_thread(move || {
+                                            match execute_voice_command(&ah_clone, &action) {
+                                                Ok(()) => debug!(
+                                                    "Voice command executed in {:?}",
+                                                    paste_time.elapsed()
+                                                ),
+                                                Err(e) => error!(
+                                                    "Failed to execute voice command: {}",
+                                                    e
+                                                ),
+                                            }
+                                            utils::hide_recording_overlay(&ah_clone);
+                                            change_tray_icon(&ah_clone, TrayIconState::Idle);
+                                        })
+                                        .unwrap_or_else(|e| {
+                                            error!(
+                                                "Failed to run voice command on main thread: {:?}",
+                                                e
+                                            );
+                                            utils::hide_recording_overlay(&ah);
+                                            change_tray_icon(&ah, TrayIconState::Idle);
+                                        });
+                                    }
+                                    VoiceCommandResult::Text(text) => {
+                                        ah.run_on_main_thread(move || {
+                                            match utils::paste(text, ah_clone.clone()) {
+                                                Ok(()) => debug!(
+                                                    "Text pasted successfully in {:?}",
+                                                    paste_time.elapsed()
+                                                ),
+                                                Err(e) => error!(
+                                                    "Failed to paste transcription: {}",
+                                                    e
+                                                ),
+                                            }
+                                            utils::hide_recording_overlay(&ah_clone);
+                                            change_tray_icon(&ah_clone, TrayIconState::Idle);
+                                        })
+                                        .unwrap_or_else(|e| {
+                                            error!(
+                                                "Failed to run paste on main thread: {:?}",
+                                                e
+                                            );
+                                            utils::hide_recording_overlay(&ah);
+                                            change_tray_icon(&ah, TrayIconState::Idle);
+                                        });
+                                    }
                                 }
-                                // Hide the overlay after transcription is complete
-                                utils::hide_recording_overlay(&ah_clone);
-                                change_tray_icon(&ah_clone, TrayIconState::Idle);
-                            })
-                            .unwrap_or_else(|e| {
-                                error!("Failed to run paste on main thread: {:?}", e);
-                                utils::hide_recording_overlay(&ah);
-                                change_tray_icon(&ah, TrayIconState::Idle);
-                            });
+                            } else {
+                                // Voice commands disabled — paste as usual
+                                ah.run_on_main_thread(move || {
+                                    match utils::paste(final_text, ah_clone.clone()) {
+                                        Ok(()) => debug!(
+                                            "Text pasted successfully in {:?}",
+                                            paste_time.elapsed()
+                                        ),
+                                        Err(e) => error!(
+                                            "Failed to paste transcription: {}",
+                                            e
+                                        ),
+                                    }
+                                    utils::hide_recording_overlay(&ah_clone);
+                                    change_tray_icon(&ah_clone, TrayIconState::Idle);
+                                })
+                                .unwrap_or_else(|e| {
+                                    error!(
+                                        "Failed to run paste on main thread: {:?}",
+                                        e
+                                    );
+                                    utils::hide_recording_overlay(&ah);
+                                    change_tray_icon(&ah, TrayIconState::Idle);
+                                });
+                            }
                         } else {
                             utils::hide_recording_overlay(&ah);
                             change_tray_icon(&ah, TrayIconState::Idle);
@@ -503,11 +832,19 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         "transcribe".to_string(),
         Arc::new(TranscribeAction {
             post_process: false,
+            streaming_active: Arc::new(AtomicBool::new(false)),
+            streaming_prev_len: Arc::new(std::sync::Mutex::new(0)),
+            streaming_handle: Arc::new(std::sync::Mutex::new(None)),
         }) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "transcribe_with_post_process".to_string(),
-        Arc::new(TranscribeAction { post_process: true }) as Arc<dyn ShortcutAction>,
+        Arc::new(TranscribeAction {
+            post_process: true,
+            streaming_active: Arc::new(AtomicBool::new(false)),
+            streaming_prev_len: Arc::new(std::sync::Mutex::new(0)),
+            streaming_handle: Arc::new(std::sync::Mutex::new(None)),
+        }) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "toggle_settings".to_string(),

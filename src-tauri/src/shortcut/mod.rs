@@ -18,6 +18,7 @@ use serde::Serialize;
 use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use crate::settings::{
     self, get_settings, ClipboardHandling, KeyboardImplementation, LLMPrompt, OverlayPosition,
@@ -159,8 +160,9 @@ pub fn change_binding(
 
     // Unregister the existing binding
     if let Err(e) = unregister_shortcut(&app, binding_to_modify.clone()) {
-        let error_msg = format!("Failed to unregister shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
+        warn!("change_binding: Failed to unregister old shortcut ({}), clearing all and re-registering", e);
+        // Fallback: clear all global shortcuts and re-register after setting the new one
+        let _ = app.global_shortcut().unregister_all();
     }
 
     // Validate the new shortcut for the current keyboard implementation
@@ -726,6 +728,15 @@ pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Res
 pub fn change_experimental_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.experimental_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_voice_commands_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.voice_commands_enabled = enabled;
     settings::write_settings(&app, settings);
     Ok(())
 }

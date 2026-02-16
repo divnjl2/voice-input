@@ -10,6 +10,7 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter};
 use transcribe_rs::{
+    engines::parakeet::{ParakeetEngine, ParakeetModelParams},
     engines::whisper::{WhisperEngine, WhisperInferenceParams},
     TranscriptionEngine,
 };
@@ -24,6 +25,7 @@ pub struct ModelStateEvent {
 
 enum LoadedEngine {
     Whisper(WhisperEngine),
+    Parakeet(ParakeetEngine),
 }
 
 #[derive(Clone)]
@@ -135,6 +137,7 @@ impl TranscriptionManager {
             if let Some(ref mut loaded_engine) = *engine {
                 match loaded_engine {
                     LoadedEngine::Whisper(ref mut e) => e.unload_model(),
+                    LoadedEngine::Parakeet(ref mut e) => e.unload_model(),
                 }
             }
             *engine = None; // Drop the engine to free memory
@@ -232,9 +235,24 @@ impl TranscriptionManager {
                 LoadedEngine::Whisper(engine)
             }
             EngineType::Parakeet => {
-                return Err(anyhow::anyhow!(
-                    "Parakeet engine is not available in this build"
-                ));
+                let mut engine = ParakeetEngine::new();
+                engine
+                    .load_model_with_params(&model_path, ParakeetModelParams::int8())
+                    .map_err(|e| {
+                        let error_msg =
+                            format!("Failed to load parakeet model {}: {}", model_id, e);
+                        let _ = self.app_handle.emit(
+                            "model-state-changed",
+                            ModelStateEvent {
+                                event_type: "loading_failed".to_string(),
+                                model_id: Some(model_id.to_string()),
+                                model_name: Some(model_info.name.clone()),
+                                error: Some(error_msg.clone()),
+                            },
+                        );
+                        anyhow::anyhow!(error_msg)
+                    })?;
+                LoadedEngine::Parakeet(engine)
             }
             EngineType::Moonshine => {
                 return Err(anyhow::anyhow!(
@@ -284,7 +302,9 @@ impl TranscriptionManager {
         let self_clone = self.clone();
         thread::spawn(move || {
             let settings = get_settings(&self_clone.app_handle);
-            if let Err(e) = self_clone.load_model(&settings.selected_model) {
+            if settings.selected_model.is_empty() {
+                info!("No model selected yet, skipping initial load");
+            } else if let Err(e) = self_clone.load_model(&settings.selected_model) {
                 error!("Failed to load model: {}", e);
             }
             let mut is_loading = self_clone.is_loading.lock().unwrap();
@@ -298,7 +318,7 @@ impl TranscriptionManager {
         current_model.clone()
     }
 
-    pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
+    fn transcribe_inner(&self, audio: Vec<f32>) -> Result<String> {
         // Update last activity timestamp
         self.last_activity.store(
             SystemTime::now()
@@ -314,7 +334,6 @@ impl TranscriptionManager {
 
         if audio.is_empty() {
             debug!("Empty audio vector");
-            self.maybe_unload_immediately("empty audio");
             return Ok(String::new());
         }
 
@@ -371,6 +390,11 @@ impl TranscriptionManager {
                         .transcribe_samples(audio, Some(params))
                         .map_err(|e| anyhow::anyhow!("Whisper transcription failed: {}", e))?
                 }
+                LoadedEngine::Parakeet(parakeet_engine) => {
+                    parakeet_engine
+                        .transcribe_samples(audio, None)
+                        .map_err(|e| anyhow::anyhow!("Parakeet transcription failed: {}", e))?
+                }
             }
         };
 
@@ -408,9 +432,23 @@ impl TranscriptionManager {
             info!("Transcription result: {}", final_result);
         }
 
-        self.maybe_unload_immediately("transcription");
-
         Ok(final_result)
+    }
+
+    pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
+        let result = self.transcribe_inner(audio);
+        if result.as_ref().map_or(true, |s| s.is_empty()) {
+            self.maybe_unload_immediately("empty audio");
+        } else {
+            self.maybe_unload_immediately("transcription");
+        }
+        result
+    }
+
+    /// Transcribe without unloading the model afterwards.
+    /// Used for streaming/partial transcription during recording.
+    pub fn transcribe_partial(&self, audio: Vec<f32>) -> Result<String> {
+        self.transcribe_inner(audio)
     }
 }
 

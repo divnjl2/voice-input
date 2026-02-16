@@ -86,6 +86,23 @@ fn init_gtk_layer_shell(overlay_window: &tauri::webview::WebviewWindow) -> bool 
     false
 }
 
+/// Shows a window without activating it (Windows only)
+/// Uses SW_SHOWNOACTIVATE to prevent the window from stealing focus,
+/// which would cause global shortcut key-up events in push-to-talk mode.
+#[cfg(target_os = "windows")]
+fn show_window_no_activate(overlay_window: &tauri::webview::WebviewWindow) {
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+
+    let overlay_clone = overlay_window.clone();
+    let _ = overlay_clone.clone().run_on_main_thread(move || {
+        if let Ok(hwnd) = overlay_clone.hwnd() {
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
+        }
+    });
+}
+
 /// Forces a window to be topmost using Win32 API (Windows only)
 /// This is more reliable than Tauri's set_always_on_top which can be overridden
 #[cfg(target_os = "windows")]
@@ -292,11 +309,19 @@ pub fn show_recording_overlay(app_handle: &AppHandle) {
                 .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
         }
 
-        let _ = overlay_window.show();
-
-        // On Windows, aggressively re-assert "topmost" in the native Z-order after showing
+        // On Windows, use SW_SHOWNOACTIVATE to prevent stealing focus from the active window.
+        // The regular show() uses SW_SHOW which activates the overlay, causing global shortcut
+        // key-up events that stop recording prematurely in push-to-talk mode.
         #[cfg(target_os = "windows")]
-        force_overlay_topmost(&overlay_window);
+        {
+            show_window_no_activate(&overlay_window);
+            force_overlay_topmost(&overlay_window);
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = overlay_window.show();
+        }
 
         // Emit event to trigger fade-in animation with recording state
         let _ = overlay_window.emit("show-overlay", "recording");
@@ -314,11 +339,16 @@ pub fn show_transcribing_overlay(app_handle: &AppHandle) {
     update_overlay_position(app_handle);
 
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
-        let _ = overlay_window.show();
-
-        // On Windows, aggressively re-assert "topmost" in the native Z-order after showing
         #[cfg(target_os = "windows")]
-        force_overlay_topmost(&overlay_window);
+        {
+            show_window_no_activate(&overlay_window);
+            force_overlay_topmost(&overlay_window);
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = overlay_window.show();
+        }
 
         // Emit event to switch to transcribing state
         let _ = overlay_window.emit("show-overlay", "transcribing");

@@ -414,6 +414,23 @@ impl AudioRecordingManager {
             _ => None,
         }
     }
+    pub fn peek_samples(&self) -> Option<Vec<f32>> {
+        if !*self.is_recording.lock().unwrap() {
+            return None;
+        }
+        if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+            match rec.peek() {
+                Ok(samples) => Some(samples),
+                Err(e) => {
+                    error!("peek() failed: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    }
+
     pub fn is_recording(&self) -> bool {
         matches!(
             *self.state.lock().unwrap(),

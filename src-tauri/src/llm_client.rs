@@ -189,3 +189,169 @@ pub async fn fetch_models(
 
     Ok(models)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::PostProcessProvider;
+
+    fn make_provider(id: &str, base_url: &str) -> PostProcessProvider {
+        PostProcessProvider {
+            id: id.to_string(),
+            label: id.to_string(),
+            base_url: base_url.to_string(),
+            allow_base_url_edit: false,
+            models_endpoint: Some("/models".to_string()),
+        }
+    }
+
+    // ── Header Building ─────────────────────────────────────────────
+
+    #[test]
+    fn test_build_headers_openai_with_api_key() {
+        let provider = make_provider("openai", "https://api.openai.com/v1");
+        let headers = build_headers(&provider, "sk-test123").unwrap();
+
+        assert_eq!(
+            headers.get("content-type").unwrap(),
+            "application/json"
+        );
+        assert_eq!(
+            headers.get("authorization").unwrap(),
+            "Bearer sk-test123"
+        );
+        // Should NOT have x-api-key header for OpenAI
+        assert!(headers.get("x-api-key").is_none());
+    }
+
+    #[test]
+    fn test_build_headers_anthropic_uses_x_api_key() {
+        let provider = make_provider("anthropic", "https://api.anthropic.com/v1");
+        let headers = build_headers(&provider, "sk-ant-test").unwrap();
+
+        assert_eq!(
+            headers.get("x-api-key").unwrap(),
+            "sk-ant-test"
+        );
+        assert_eq!(
+            headers.get("anthropic-version").unwrap(),
+            "2023-06-01"
+        );
+        // Should NOT have authorization header for Anthropic
+        assert!(headers.get("authorization").is_none());
+    }
+
+    #[test]
+    fn test_build_headers_no_api_key() {
+        let provider = make_provider("custom", "http://localhost:11434/v1");
+        let headers = build_headers(&provider, "").unwrap();
+
+        // When empty, no auth headers should be set
+        assert!(headers.get("authorization").is_none());
+        assert!(headers.get("x-api-key").is_none());
+    }
+
+    #[test]
+    fn test_build_headers_common_fields() {
+        let provider = make_provider("openai", "https://api.openai.com/v1");
+        let headers = build_headers(&provider, "key").unwrap();
+
+        assert!(headers.get("referer").is_some());
+        assert!(headers.get("user-agent").is_some());
+        assert!(headers.get("x-title").is_some());
+    }
+
+    // ── URL Construction ────────────────────────────────────────────
+
+    #[test]
+    fn test_chat_completion_url_no_trailing_slash() {
+        let base_url = "https://api.openai.com/v1";
+        let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+        assert_eq!(url, "https://api.openai.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_chat_completion_url_with_trailing_slash() {
+        let base_url = "https://api.openai.com/v1/";
+        let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+        assert_eq!(url, "https://api.openai.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_models_url() {
+        let base_url = "https://api.groq.com/openai/v1/";
+        let url = format!("{}/models", base_url.trim_end_matches('/'));
+        assert_eq!(url, "https://api.groq.com/openai/v1/models");
+    }
+
+    // ── Request Body ────────────────────────────────────────────────
+
+    #[test]
+    fn test_chat_completion_request_serialization() {
+        let request = ChatCompletionRequest {
+            model: "gpt-4".to_string(),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: "Fix this: hello wrold".to_string(),
+            }],
+        };
+
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["model"], "gpt-4");
+        assert_eq!(json["messages"][0]["role"], "user");
+        assert_eq!(json["messages"][0]["content"], "Fix this: hello wrold");
+    }
+
+    // ── Response Parsing ────────────────────────────────────────────
+
+    #[test]
+    fn test_chat_completion_response_parsing() {
+        let json = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "Hello world"
+                }
+            }]
+        });
+
+        let response: ChatCompletionResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(response.choices.len(), 1);
+        assert_eq!(
+            response.choices[0].message.content.as_deref(),
+            Some("Hello world")
+        );
+    }
+
+    #[test]
+    fn test_chat_completion_response_empty_choices() {
+        let json = serde_json::json!({
+            "choices": []
+        });
+
+        let response: ChatCompletionResponse = serde_json::from_value(json).unwrap();
+        assert!(response.choices.is_empty());
+    }
+
+    #[test]
+    fn test_chat_completion_response_null_content() {
+        let json = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": null
+                }
+            }]
+        });
+
+        let response: ChatCompletionResponse = serde_json::from_value(json).unwrap();
+        assert!(response.choices[0].message.content.is_none());
+    }
+
+    // ── Client Creation ─────────────────────────────────────────────
+
+    #[test]
+    fn test_create_client_success() {
+        let provider = make_provider("openai", "https://api.openai.com/v1");
+        let result = create_client(&provider, "test-key");
+        assert!(result.is_ok());
+    }
+}

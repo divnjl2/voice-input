@@ -317,6 +317,8 @@ pub struct AppSettings {
     pub keyboard_implementation: KeyboardImplementation,
     #[serde(default = "default_paste_delay_ms")]
     pub paste_delay_ms: u64,
+    #[serde(default = "default_voice_commands_enabled")]
+    pub voice_commands_enabled: bool,
 }
 
 fn default_model() -> String {
@@ -368,6 +370,10 @@ fn default_word_correction_threshold() -> f64 {
 
 fn default_paste_delay_ms() -> u64 {
     60
+}
+
+fn default_voice_commands_enabled() -> bool {
+    false
 }
 
 fn default_history_limit() -> usize {
@@ -543,7 +549,7 @@ pub const SETTINGS_STORE_PATH: &str = "settings_store.json";
 
 pub fn get_default_settings() -> AppSettings {
     #[cfg(target_os = "windows")]
-    let default_shortcut = "ctrl+space";
+    let default_shortcut = "ctrl+shift+space";
     #[cfg(target_os = "macos")]
     let default_shortcut = "option+space";
     #[cfg(target_os = "linux")]
@@ -651,6 +657,7 @@ pub fn get_default_settings() -> AppSettings {
         experimental_enabled: false,
         keyboard_implementation: KeyboardImplementation::default(),
         paste_delay_ms: default_paste_delay_ms(),
+        voice_commands_enabled: default_voice_commands_enabled(),
     }
 }
 
@@ -782,4 +789,296 @@ pub fn get_history_limit(app: &AppHandle) -> usize {
 pub fn get_recording_retention_period(app: &AppHandle) -> RecordingRetentionPeriod {
     let settings = get_settings(app);
     settings.recording_retention_period
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Default Settings ─────────────────────────────────────────────
+
+    #[test]
+    fn test_default_settings_has_required_bindings() {
+        let settings = get_default_settings();
+        assert!(settings.bindings.contains_key("transcribe"));
+        assert!(settings.bindings.contains_key("transcribe_with_post_process"));
+        assert!(settings.bindings.contains_key("toggle_settings"));
+        assert!(settings.bindings.contains_key("cancel"));
+    }
+
+    #[test]
+    fn test_default_settings_cancel_binding_is_escape() {
+        let settings = get_default_settings();
+        let cancel = settings.bindings.get("cancel").unwrap();
+        assert_eq!(cancel.default_binding, "escape");
+        assert_eq!(cancel.current_binding, "escape");
+    }
+
+    #[test]
+    fn test_default_settings_transcribe_binding() {
+        let settings = get_default_settings();
+        let transcribe = settings.bindings.get("transcribe").unwrap();
+        // Should have a non-empty default binding
+        assert!(!transcribe.default_binding.is_empty());
+        assert_eq!(transcribe.id, "transcribe");
+    }
+
+    #[test]
+    fn test_default_settings_values() {
+        let settings = get_default_settings();
+        assert!(settings.push_to_talk);
+        assert!(!settings.audio_feedback);
+        assert_eq!(settings.audio_feedback_volume, 1.0);
+        assert!(!settings.start_hidden);
+        assert!(!settings.autostart_enabled);
+        assert!(settings.update_checks_enabled);
+        assert_eq!(settings.selected_model, "");
+        assert!(!settings.always_on_microphone);
+        assert!(!settings.translate_to_english);
+        assert_eq!(settings.selected_language, "auto");
+        assert!(!settings.debug_mode);
+        assert!(settings.custom_words.is_empty());
+        assert!(!settings.post_process_enabled);
+        assert!(!settings.mute_while_recording);
+        assert!(!settings.append_trailing_space);
+        assert!(!settings.experimental_enabled);
+        assert!(!settings.voice_commands_enabled);
+    }
+
+    #[test]
+    fn test_default_word_correction_threshold() {
+        let settings = get_default_settings();
+        assert!((settings.word_correction_threshold - 0.18).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_default_history_limit() {
+        let settings = get_default_settings();
+        assert_eq!(settings.history_limit, 5);
+    }
+
+    #[test]
+    fn test_default_paste_delay_ms() {
+        let settings = get_default_settings();
+        assert_eq!(settings.paste_delay_ms, 60);
+    }
+
+    // ── Serialization / Deserialization ──────────────────────────────
+
+    #[test]
+    fn test_settings_roundtrip_json() {
+        let settings = get_default_settings();
+        let json = serde_json::to_value(&settings).unwrap();
+        let deserialized: AppSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.push_to_talk, settings.push_to_talk);
+        assert_eq!(deserialized.selected_language, settings.selected_language);
+        assert_eq!(deserialized.history_limit, settings.history_limit);
+        assert_eq!(
+            deserialized.voice_commands_enabled,
+            settings.voice_commands_enabled
+        );
+    }
+
+    #[test]
+    fn test_settings_deserialize_missing_fields_use_defaults() {
+        // Minimal JSON with only bindings — all other fields should get defaults
+        let json = serde_json::json!({
+            "bindings": {},
+            "push_to_talk": false,
+            "audio_feedback": true
+        });
+        let settings: AppSettings = serde_json::from_value(json).unwrap();
+        assert!(!settings.push_to_talk);
+        assert!(settings.audio_feedback);
+        // Defaults for fields not in JSON
+        assert_eq!(settings.audio_feedback_volume, 1.0);
+        assert!(!settings.start_hidden);
+        assert!(settings.update_checks_enabled);
+        assert!(!settings.voice_commands_enabled);
+    }
+
+    // ── LogLevel ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_log_level_deserialize_string() {
+        let json = serde_json::json!("debug");
+        let level: LogLevel = serde_json::from_value(json).unwrap();
+        assert_eq!(level, LogLevel::Debug);
+    }
+
+    #[test]
+    fn test_log_level_deserialize_number_legacy() {
+        let json = serde_json::json!(3);
+        let level: LogLevel = serde_json::from_value(json).unwrap();
+        assert_eq!(level, LogLevel::Info);
+    }
+
+    #[test]
+    fn test_log_level_serialize() {
+        let json = serde_json::to_value(LogLevel::Warn).unwrap();
+        assert_eq!(json, serde_json::json!("warn"));
+    }
+
+    // ── ModelUnloadTimeout ──────────────────────────────────────────
+
+    #[test]
+    fn test_model_unload_timeout_to_minutes() {
+        assert_eq!(ModelUnloadTimeout::Never.to_minutes(), None);
+        assert_eq!(ModelUnloadTimeout::Immediately.to_minutes(), Some(0));
+        assert_eq!(ModelUnloadTimeout::Min2.to_minutes(), Some(2));
+        assert_eq!(ModelUnloadTimeout::Min5.to_minutes(), Some(5));
+        assert_eq!(ModelUnloadTimeout::Min10.to_minutes(), Some(10));
+        assert_eq!(ModelUnloadTimeout::Min15.to_minutes(), Some(15));
+        assert_eq!(ModelUnloadTimeout::Hour1.to_minutes(), Some(60));
+        assert_eq!(ModelUnloadTimeout::Sec5.to_minutes(), Some(0));
+    }
+
+    #[test]
+    fn test_model_unload_timeout_to_seconds() {
+        assert_eq!(ModelUnloadTimeout::Never.to_seconds(), None);
+        assert_eq!(ModelUnloadTimeout::Immediately.to_seconds(), Some(0));
+        assert_eq!(ModelUnloadTimeout::Min2.to_seconds(), Some(120));
+        assert_eq!(ModelUnloadTimeout::Min5.to_seconds(), Some(300));
+        assert_eq!(ModelUnloadTimeout::Sec5.to_seconds(), Some(5));
+        assert_eq!(ModelUnloadTimeout::Hour1.to_seconds(), Some(3600));
+    }
+
+    // ── SoundTheme ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_sound_theme_paths() {
+        assert_eq!(SoundTheme::Marimba.to_start_path(), "resources/marimba_start.wav");
+        assert_eq!(SoundTheme::Marimba.to_stop_path(), "resources/marimba_stop.wav");
+        assert_eq!(SoundTheme::Pop.to_start_path(), "resources/pop_start.wav");
+        assert_eq!(SoundTheme::Pop.to_stop_path(), "resources/pop_stop.wav");
+        assert_eq!(SoundTheme::Custom.to_start_path(), "resources/custom_start.wav");
+        assert_eq!(SoundTheme::Custom.to_stop_path(), "resources/custom_stop.wav");
+    }
+
+    // ── PasteMethod Default ─────────────────────────────────────────
+
+    #[test]
+    fn test_paste_method_default() {
+        let pm = PasteMethod::default();
+        // On Windows/macOS it should be CtrlV, on Linux Direct
+        #[cfg(target_os = "linux")]
+        assert_eq!(pm, PasteMethod::Direct);
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(pm, PasteMethod::CtrlV);
+    }
+
+    // ── PostProcessProvider ─────────────────────────────────────────
+
+    #[test]
+    fn test_default_post_process_providers_has_openai() {
+        let providers = default_post_process_providers();
+        assert!(providers.iter().any(|p| p.id == "openai"));
+        assert!(providers.iter().any(|p| p.id == "custom"));
+    }
+
+    #[test]
+    fn test_default_post_process_provider_id_is_openai() {
+        assert_eq!(default_post_process_provider_id(), "openai");
+    }
+
+    #[test]
+    fn test_default_post_process_prompts_not_empty() {
+        let prompts = default_post_process_prompts();
+        assert!(!prompts.is_empty());
+        assert_eq!(prompts[0].id, "default_improve_transcriptions");
+        assert!(prompts[0].prompt.contains("${output}"));
+    }
+
+    // ── AppSettings Methods ─────────────────────────────────────────
+
+    #[test]
+    fn test_active_post_process_provider() {
+        let settings = get_default_settings();
+        let provider = settings.active_post_process_provider().unwrap();
+        assert_eq!(provider.id, "openai");
+    }
+
+    #[test]
+    fn test_post_process_provider_by_id() {
+        let settings = get_default_settings();
+        assert!(settings.post_process_provider("openai").is_some());
+        assert!(settings.post_process_provider("custom").is_some());
+        assert!(settings.post_process_provider("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_post_process_provider_mut() {
+        let mut settings = get_default_settings();
+        let provider = settings.post_process_provider_mut("custom").unwrap();
+        provider.base_url = "http://example.com/v1".to_string();
+        assert_eq!(
+            settings.post_process_provider("custom").unwrap().base_url,
+            "http://example.com/v1"
+        );
+    }
+
+    // ── ensure_post_process_defaults ─────────────────────────────────
+
+    #[test]
+    fn test_ensure_post_process_defaults_no_change_when_complete() {
+        let mut settings = get_default_settings();
+        let changed = ensure_post_process_defaults(&mut settings);
+        assert!(!changed, "Default settings should already be complete");
+    }
+
+    #[test]
+    fn test_ensure_post_process_defaults_adds_missing_provider() {
+        let mut settings = get_default_settings();
+        // Remove one provider
+        settings
+            .post_process_providers
+            .retain(|p| p.id != "groq");
+        settings.post_process_api_keys.remove("groq");
+        settings.post_process_models.remove("groq");
+
+        let changed = ensure_post_process_defaults(&mut settings);
+        assert!(changed);
+        assert!(settings.post_process_providers.iter().any(|p| p.id == "groq"));
+        assert!(settings.post_process_api_keys.contains_key("groq"));
+        assert!(settings.post_process_models.contains_key("groq"));
+    }
+
+    // ── OverlayPosition Serialization ───────────────────────────────
+
+    #[test]
+    fn test_overlay_position_serialization() {
+        let json = serde_json::to_value(OverlayPosition::Top).unwrap();
+        assert_eq!(json, serde_json::json!("top"));
+
+        let json = serde_json::to_value(OverlayPosition::None).unwrap();
+        assert_eq!(json, serde_json::json!("none"));
+
+        let deserialized: OverlayPosition = serde_json::from_value(serde_json::json!("bottom")).unwrap();
+        assert_eq!(deserialized, OverlayPosition::Bottom);
+    }
+
+    // ── RecordingRetentionPeriod ────────────────────────────────────
+
+    #[test]
+    fn test_recording_retention_period_serialization() {
+        let json = serde_json::to_value(RecordingRetentionPeriod::Days3).unwrap();
+        assert_eq!(json, serde_json::json!("days3"));
+
+        let deserialized: RecordingRetentionPeriod =
+            serde_json::from_value(serde_json::json!("weeks2")).unwrap();
+        assert_eq!(deserialized, RecordingRetentionPeriod::Weeks2);
+    }
+
+    // ── ClipboardHandling ───────────────────────────────────────────
+
+    #[test]
+    fn test_clipboard_handling_default() {
+        assert_eq!(ClipboardHandling::default(), ClipboardHandling::DontModify);
+    }
+
+    #[test]
+    fn test_clipboard_handling_serialization() {
+        let json = serde_json::to_value(ClipboardHandling::CopyToClipboard).unwrap();
+        assert_eq!(json, serde_json::json!("copy_to_clipboard"));
+    }
 }

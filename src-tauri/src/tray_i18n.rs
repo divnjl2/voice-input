@@ -34,3 +34,69 @@ pub fn get_tray_translations(locale: Option<String>) -> TrayStrings {
         .cloned()
         .expect("English translations must exist")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_language_code_simple() {
+        assert_eq!(get_language_code("en"), "en");
+        assert_eq!(get_language_code("ru"), "ru");
+        assert_eq!(get_language_code("fr"), "fr");
+    }
+
+    #[test]
+    fn test_get_language_code_with_region() {
+        assert_eq!(get_language_code("en-US"), "en");
+        assert_eq!(get_language_code("pt-BR"), "pt");
+        assert_eq!(get_language_code("zh-Hans"), "zh");
+    }
+
+    #[test]
+    fn test_get_language_code_with_underscore() {
+        assert_eq!(get_language_code("en_US"), "en");
+        assert_eq!(get_language_code("ja_JP"), "ja");
+    }
+
+    #[test]
+    fn test_get_language_code_empty() {
+        assert_eq!(get_language_code(""), "");
+    }
+
+    #[test]
+    fn test_get_tray_translations_english() {
+        let strings = get_tray_translations(Some("en".to_string()));
+        // English strings should exist and be non-empty
+        assert!(!strings.settings.is_empty());
+        assert!(!strings.quit.is_empty());
+    }
+
+    #[test]
+    fn test_get_tray_translations_russian() {
+        let strings = get_tray_translations(Some("ru".to_string()));
+        assert!(!strings.settings.is_empty());
+        assert!(!strings.quit.is_empty());
+    }
+
+    #[test]
+    fn test_get_tray_translations_fallback_to_english() {
+        // Unknown language should fall back to English
+        let strings = get_tray_translations(Some("xx".to_string()));
+        let en_strings = get_tray_translations(Some("en".to_string()));
+        assert_eq!(strings.settings, en_strings.settings);
+    }
+
+    #[test]
+    fn test_get_tray_translations_none_locale() {
+        // None should default to English
+        let strings = get_tray_translations(None);
+        let en_strings = get_tray_translations(Some("en".to_string()));
+        assert_eq!(strings.quit, en_strings.quit);
+    }
+
+    #[test]
+    fn test_translations_map_has_english() {
+        assert!(TRANSLATIONS.contains_key("en"));
+    }
+}
