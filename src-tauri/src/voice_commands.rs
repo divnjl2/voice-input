@@ -101,18 +101,27 @@ static COMMAND_MAP: Lazy<HashMap<String, VoiceCommand>> = Lazy::new(|| {
         }
     };
 
-    // ── Enter / New Line ──────────────────────────────────────────────
+    // ── Enter / New Line / Send ────────────────────────────────────────
     add(
         &[
             "press enter",
             "enter",
             "new line",
             "newline",
+            "send",
+            "send it",
+            "submit",
             "нажми ввод",
             "ввод",
             "энтер",
             "новая строка",
             "перенос строки",
+            "отправить",
+            "отправь",
+            "отправляй",
+            "послать",
+            "пошли",
+            "сенд",
         ],
         VoiceAction::KeyPress(KeyAction::Enter),
         "Press Enter",

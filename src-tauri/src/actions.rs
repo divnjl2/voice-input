@@ -30,8 +30,10 @@ pub trait ShortcutAction: Send + Sync {
 struct TranscribeAction {
     post_process: bool,
     streaming_active: Arc<AtomicBool>,
-    streaming_prev_len: Arc<std::sync::Mutex<usize>>,
     streaming_handle: Arc<std::sync::Mutex<Option<std::thread::JoinHandle<()>>>>,
+    /// Final text produced by the streaming loop (displayed in overlay only).
+    /// `stop()` uses this to decide whether to skip full re-transcription.
+    streaming_final_text: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
@@ -328,45 +330,64 @@ fn release_all_modifiers(app: &AppHandle) {
     }
 }
 
-fn erase_chars(app: &AppHandle, count: usize) {
-    use crate::input::EnigoState;
-    use enigo::{Direction, Key, Keyboard};
-
-    if count == 0 {
-        return;
-    }
-    release_all_modifiers(app);
-    if let Some(enigo_state) = app.try_state::<EnigoState>() {
-        if let Ok(mut enigo) = enigo_state.0.lock() {
-            for _ in 0..count {
-                let _ = enigo.key(Key::Backspace, Direction::Click);
-            }
-        }
-    }
+/// Check if Chinese variant conversion would be needed (without doing it)
+fn maybe_needs_chinese_conversion(settings: &AppSettings) -> bool {
+    settings.selected_language == "zh-Hans" || settings.selected_language == "zh-Hant"
 }
 
-fn type_text(app: &AppHandle, text: &str) {
-    use crate::input::EnigoState;
-    use enigo::Keyboard;
+/// Apply post-processing (Chinese conversion + LLM) to transcription text.
+/// Returns (final_text, post_processed_text_for_history, post_process_prompt_for_history).
+async fn apply_post_processing(
+    settings: &AppSettings,
+    transcription: &str,
+    post_process: bool,
+) -> (String, Option<String>, Option<String>) {
+    let mut final_text = transcription.to_string();
+    let mut post_processed_text: Option<String> = None;
+    let mut post_process_prompt: Option<String> = None;
 
-    release_all_modifiers(app);
-    if let Some(enigo_state) = app.try_state::<EnigoState>() {
-        if let Ok(mut enigo) = enigo_state.0.lock() {
-            let _ = enigo.text(text);
-        }
+    // Chinese variant conversion
+    if let Some(converted_text) = maybe_convert_chinese_variant(settings, transcription).await {
+        final_text = converted_text;
     }
+
+    // LLM post-processing
+    let processed = if post_process {
+        post_process_transcription(settings, &final_text).await
+    } else {
+        None
+    };
+    if let Some(processed_text) = processed {
+        post_processed_text = Some(processed_text.clone());
+        final_text = processed_text;
+
+        if let Some(prompt_id) = &settings.post_process_selected_prompt_id {
+            if let Some(prompt) = settings
+                .post_process_prompts
+                .iter()
+                .find(|p| &p.id == prompt_id)
+            {
+                post_process_prompt = Some(prompt.prompt.clone());
+            }
+        }
+    } else if final_text != transcription {
+        // Chinese conversion was applied but no LLM post-processing
+        post_processed_text = Some(final_text.clone());
+    }
+
+    (final_text, post_processed_text, post_process_prompt)
 }
 
 fn streaming_transcription_loop(
     active: Arc<AtomicBool>,
-    prev_len: Arc<std::sync::Mutex<usize>>,
+    final_text_out: Arc<std::sync::Mutex<Option<String>>>,
     app: AppHandle,
 ) {
     info!("Streaming loop: started, waiting for audio to accumulate");
 
-    // Wait for model to be ready + audio to accumulate (~2s)
+    // Wait for model to be ready + audio to accumulate (~1.2s)
     // Check flag every 50ms so we can exit quickly if recording stops
-    for i in 0..40 {
+    for i in 0..24 {
         if !active.load(Ordering::SeqCst) {
             info!("Streaming loop: cancelled during initial delay (after {}ms)", i * 50);
             return;
@@ -376,37 +397,86 @@ fn streaming_transcription_loop(
 
     info!("Streaming loop: entering main loop");
 
+    // ── Chunked streaming state ──
+    // Audio is processed in bounded chunks to keep transcription fast for long recordings.
+    // When a chunk exceeds MAX_CHUNK_SAMPLES and the partial text stabilizes,
+    // we "finalize" it: save the text and advance the offset so only new audio
+    // is transcribed on subsequent iterations.
+    const MAX_CHUNK_SECS: usize = 15;
+    const MAX_CHUNK_SAMPLES: usize = WHISPER_SAMPLE_RATE * MAX_CHUNK_SECS;
+    const FORCE_FINALIZE_SECS: usize = 20;
+    const FORCE_FINALIZE_SAMPLES: usize = WHISPER_SAMPLE_RATE * FORCE_FINALIZE_SECS;
+    const STABILIZE_ITERS: usize = 2;
+
+    let mut finalized_text = String::new();
+    let mut finalized_offset: usize = 0;
+    let mut prev_partial = String::new();
+    let mut stable_count: usize = 0;
+    let mut prev_displayed = String::new();
+
     while active.load(Ordering::SeqCst) {
         let rm = app.state::<Arc<AudioRecordingManager>>();
-        let samples = rm.peek_samples();
+        let chunk = rm.peek_samples_from(finalized_offset);
 
-        if let Some(samples) = samples {
-            let sample_count = samples.len();
-            // Only transcribe if we have at least 0.5s of audio
-            if sample_count > WHISPER_SAMPLE_RATE / 2 {
+        if let Some(chunk) = chunk {
+            let chunk_len = chunk.len();
+
+            // Only transcribe if we have at least 0.5s of new audio
+            if chunk_len > WHISPER_SAMPLE_RATE / 2 {
                 debug!(
-                    "Streaming loop: peeked {} samples ({:.1}s), transcribing...",
-                    sample_count,
-                    sample_count as f64 / WHISPER_SAMPLE_RATE as f64
+                    "Streaming loop: chunk {:.1}s (offset {}, +{} samples), transcribing...",
+                    chunk_len as f64 / WHISPER_SAMPLE_RATE as f64,
+                    finalized_offset,
+                    chunk_len,
                 );
+
                 let tm = app.state::<Arc<TranscriptionManager>>();
-                match tm.transcribe_partial(samples) {
-                    Ok(text) => {
-                        if !text.is_empty() {
-                            let mut prev = prev_len.lock().unwrap();
-                            debug!(
-                                "Streaming loop: got '{}', erasing {} prev chars",
-                                text,
-                                *prev
-                            );
-                            erase_chars(&app, *prev);
-                            if *prev > 0 {
-                                std::thread::sleep(std::time::Duration::from_millis(30));
-                            }
-                            type_text(&app, &text);
-                            *prev = text.chars().count();
+                match tm.transcribe_partial(chunk) {
+                    Ok(partial) => {
+                        // Build full display text: finalized + current partial
+                        let full_text = match (finalized_text.is_empty(), partial.is_empty()) {
+                            (true, _) => partial.clone(),
+                            (_, true) => finalized_text.clone(),
+                            _ => format!("{} {}", finalized_text, partial),
+                        };
+
+                        // Track text stability for chunk finalization
+                        if !partial.is_empty() && partial == prev_partial {
+                            stable_count += 1;
                         } else {
-                            debug!("Streaming loop: transcription returned empty");
+                            stable_count = 0;
+                        }
+
+                        // Finalize chunk when:
+                        // 1. Audio exceeds window and text is stable, OR
+                        // 2. Audio exceeds force limit (prevents unbounded growth)
+                        let should_finalize = (chunk_len >= MAX_CHUNK_SAMPLES && stable_count >= STABILIZE_ITERS)
+                            || chunk_len >= FORCE_FINALIZE_SAMPLES;
+                        if should_finalize {
+                            info!(
+                                "Streaming loop: finalizing chunk at offset {} ({:.1}s total), text so far: '{}'",
+                                finalized_offset + chunk_len,
+                                (finalized_offset + chunk_len) as f64 / WHISPER_SAMPLE_RATE as f64,
+                                full_text,
+                            );
+                            finalized_text = full_text.clone();
+                            finalized_offset += chunk_len;
+                            prev_partial.clear();
+                            stable_count = 0;
+                        } else {
+                            prev_partial = partial;
+                        }
+
+                        // Show streaming text in overlay (not typed into active window)
+                        if full_text != prev_displayed {
+                            debug!(
+                                "Streaming loop: overlay display '{}'",
+                                full_text
+                            );
+                            crate::overlay::emit_streaming_text(&app, &full_text);
+                            prev_displayed = full_text;
+                        } else {
+                            debug!("Streaming loop: text unchanged, skipping update");
                         }
                     }
                     Err(e) => {
@@ -414,14 +484,17 @@ fn streaming_transcription_loop(
                     }
                 }
             } else {
-                debug!("Streaming loop: only {} samples, too short", sample_count);
+                debug!(
+                    "Streaming loop: chunk only {:.1}s, too short",
+                    chunk_len as f64 / WHISPER_SAMPLE_RATE as f64
+                );
             }
         } else {
             debug!("Streaming loop: peek returned None");
         }
 
-        // Wait before next peek (~800ms in 50ms increments for fast exit)
-        for _ in 0..16 {
+        // Wait before next peek (~500ms in 50ms increments for fast exit)
+        for _ in 0..10 {
             if !active.load(Ordering::SeqCst) {
                 break;
             }
@@ -429,18 +502,19 @@ fn streaming_transcription_loop(
         }
     }
 
-    // Clean up: erase any remaining partial text before exiting
-    let prev = {
-        let mut p = prev_len.lock().unwrap();
-        let val = *p;
-        *p = 0;
-        val
-    };
-    if prev > 0 {
-        info!("Streaming loop: erasing {} chars on exit", prev);
-        erase_chars(&app, prev);
+    // Store final streamed text so stop() can use it for the final paste
+    if !prev_displayed.is_empty() {
+        info!(
+            "Streaming loop: final streamed text: '{}' ({} chars)",
+            prev_displayed,
+            prev_displayed.chars().count()
+        );
+        *final_text_out.lock().unwrap() = Some(prev_displayed);
     }
-    info!("Streaming loop: exited");
+    info!("Streaming loop: exited (finalized {} chunks, offset {})",
+        if finalized_offset > 0 { finalized_offset / (MAX_CHUNK_SAMPLES.max(1)) + 1 } else { 0 },
+        finalized_offset,
+    );
 }
 
 impl ShortcutAction for TranscribeAction {
@@ -508,12 +582,12 @@ impl ShortcutAction for TranscribeAction {
 
             // Start streaming transcription loop
             self.streaming_active.store(true, Ordering::SeqCst);
-            *self.streaming_prev_len.lock().unwrap() = 0;
+            *self.streaming_final_text.lock().unwrap() = None;
             let streaming_flag = self.streaming_active.clone();
-            let prev_len = self.streaming_prev_len.clone();
+            let final_text_out = self.streaming_final_text.clone();
             let app_clone = app.clone();
             let handle = std::thread::spawn(move || {
-                streaming_transcription_loop(streaming_flag, prev_len, app_clone);
+                streaming_transcription_loop(streaming_flag, final_text_out, app_clone);
             });
             *self.streaming_handle.lock().unwrap() = Some(handle);
         }
@@ -552,6 +626,7 @@ impl ShortcutAction for TranscribeAction {
 
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process;
+        let streaming_final_text = self.streaming_final_text.clone();
 
         tauri::async_runtime::spawn(async move {
             let binding_id = binding_id.clone(); // Clone for the inner async task
@@ -560,14 +635,15 @@ impl ShortcutAction for TranscribeAction {
                 binding_id
             );
 
-            // Wait for streaming loop to finish erasing its text before we proceed
+            // Wait for streaming loop to finish
             if let Some(handle) = streaming_join {
                 info!("Waiting for streaming loop to finish...");
                 let _ = handle.join();
                 info!("Streaming loop finished");
-                // Small delay after erase so the input field processes the backspaces
-                std::thread::sleep(std::time::Duration::from_millis(50));
             }
+
+            // Grab the text the streaming loop produced (shown in overlay, not typed)
+            let streamed_text = streaming_final_text.lock().unwrap().take();
 
             let stop_recording_time = Instant::now();
             if let Some(samples) = rm.stop_recording(&binding_id) {
@@ -577,170 +653,208 @@ impl ShortcutAction for TranscribeAction {
                     samples.len()
                 );
 
-                let transcription_time = Instant::now();
-                let samples_clone = samples.clone(); // Clone for history saving
-                match tm.transcribe(samples) {
-                    Ok(transcription) => {
-                        debug!(
-                            "Transcription completed in {:?}: '{}'",
-                            transcription_time.elapsed(),
-                            transcription
-                        );
-                        if !transcription.is_empty() {
-                            let settings = get_settings(&ah);
-                            let mut final_text = transcription.clone();
-                            let mut post_processed_text: Option<String> = None;
-                            let mut post_process_prompt: Option<String> = None;
+                let settings = get_settings(&ah);
 
-                            // First, check if Chinese variant conversion is needed
-                            if let Some(converted_text) =
-                                maybe_convert_chinese_variant(&settings, &transcription).await
-                            {
-                                final_text = converted_text;
-                            }
+                // Decide whether we need a full re-transcription.
+                // If streaming already produced text and no post-processing is needed,
+                // we can skip the expensive full transcription and use the streamed result.
+                let needs_post_processing = post_process
+                    || maybe_needs_chinese_conversion(&settings);
 
-                            // Then apply LLM post-processing if this is the post-process hotkey
-                            // Uses final_text which may already have Chinese conversion applied
-                            let processed = if post_process {
-                                post_process_transcription(&settings, &final_text).await
-                            } else {
-                                None
-                            };
-                            if let Some(processed_text) = processed {
-                                post_processed_text = Some(processed_text.clone());
-                                final_text = processed_text;
-
-                                // Get the prompt that was used
-                                if let Some(prompt_id) = &settings.post_process_selected_prompt_id {
-                                    if let Some(prompt) = settings
-                                        .post_process_prompts
-                                        .iter()
-                                        .find(|p| &p.id == prompt_id)
-                                    {
-                                        post_process_prompt = Some(prompt.prompt.clone());
-                                    }
-                                }
-                            } else if final_text != transcription {
-                                // Chinese conversion was applied but no LLM post-processing
-                                post_processed_text = Some(final_text.clone());
-                            }
-
-                            // Save to history with post-processed text and prompt
-                            let hm_clone = Arc::clone(&hm);
-                            let transcription_for_history = transcription.clone();
-                            tauri::async_runtime::spawn(async move {
-                                if let Err(e) = hm_clone
-                                    .save_transcription(
-                                        samples_clone,
-                                        transcription_for_history,
-                                        post_processed_text,
-                                        post_process_prompt,
-                                    )
-                                    .await
-                                {
-                                    error!("Failed to save transcription to history: {}", e);
-                                }
-                            });
-
-                            // Check if the final text is a voice command
-                            let settings_for_vc = get_settings(&ah);
-                            let voice_commands_enabled =
-                                settings_for_vc.voice_commands_enabled;
-
-                            let ah_clone = ah.clone();
-                            let paste_time = Instant::now();
-
-                            if voice_commands_enabled {
-                                match voice_commands::check_voice_command(&final_text) {
-                                    VoiceCommandResult::Command(cmd) => {
-                                        info!(
-                                            "Executing voice command: {} (from '{}')",
-                                            cmd.description, final_text
-                                        );
-                                        let action = cmd.action.clone();
-                                        ah.run_on_main_thread(move || {
-                                            match execute_voice_command(&ah_clone, &action) {
-                                                Ok(()) => debug!(
-                                                    "Voice command executed in {:?}",
-                                                    paste_time.elapsed()
-                                                ),
-                                                Err(e) => error!(
-                                                    "Failed to execute voice command: {}",
-                                                    e
-                                                ),
-                                            }
-                                            utils::hide_recording_overlay(&ah_clone);
-                                            change_tray_icon(&ah_clone, TrayIconState::Idle);
-                                        })
-                                        .unwrap_or_else(|e| {
-                                            error!(
-                                                "Failed to run voice command on main thread: {:?}",
-                                                e
-                                            );
-                                            utils::hide_recording_overlay(&ah);
-                                            change_tray_icon(&ah, TrayIconState::Idle);
-                                        });
-                                    }
-                                    VoiceCommandResult::Text(text) => {
-                                        ah.run_on_main_thread(move || {
-                                            match utils::paste(text, ah_clone.clone()) {
-                                                Ok(()) => debug!(
-                                                    "Text pasted successfully in {:?}",
-                                                    paste_time.elapsed()
-                                                ),
-                                                Err(e) => error!(
-                                                    "Failed to paste transcription: {}",
-                                                    e
-                                                ),
-                                            }
-                                            utils::hide_recording_overlay(&ah_clone);
-                                            change_tray_icon(&ah_clone, TrayIconState::Idle);
-                                        })
-                                        .unwrap_or_else(|e| {
-                                            error!(
-                                                "Failed to run paste on main thread: {:?}",
-                                                e
-                                            );
-                                            utils::hide_recording_overlay(&ah);
-                                            change_tray_icon(&ah, TrayIconState::Idle);
-                                        });
-                                    }
-                                }
-                            } else {
-                                // Voice commands disabled — paste as usual
-                                ah.run_on_main_thread(move || {
-                                    match utils::paste(final_text, ah_clone.clone()) {
-                                        Ok(()) => debug!(
-                                            "Text pasted successfully in {:?}",
-                                            paste_time.elapsed()
-                                        ),
-                                        Err(e) => error!(
-                                            "Failed to paste transcription: {}",
-                                            e
-                                        ),
-                                    }
-                                    utils::hide_recording_overlay(&ah_clone);
-                                    change_tray_icon(&ah_clone, TrayIconState::Idle);
-                                })
-                                .unwrap_or_else(|e| {
-                                    error!(
-                                        "Failed to run paste on main thread: {:?}",
-                                        e
+                let (transcription, final_text, post_processed_text, post_process_prompt) =
+                    if let Some(ref streamed) = streamed_text {
+                        if !needs_post_processing {
+                            // Fast path: streaming text is already on screen, no post-processing needed.
+                            // Skip full re-transcription entirely.
+                            info!(
+                                "Using streamed text directly (no post-processing): '{}'",
+                                streamed
+                            );
+                            // Unload the model since we won't call transcribe()
+                            tm.maybe_unload_immediately("streaming-only transcription");
+                            (streamed.clone(), streamed.clone(), None, None)
+                        } else {
+                            // Post-processing needed: do full transcription for best quality,
+                            // then replace the streamed text with the post-processed result.
+                            info!("Post-processing requested, running full transcription");
+                            let transcription_time = Instant::now();
+                            match tm.transcribe(samples.clone()) {
+                                Ok(transcription) => {
+                                    debug!(
+                                        "Transcription completed in {:?}: '{}'",
+                                        transcription_time.elapsed(),
+                                        transcription
                                     );
+                                    let (ft, ppt, ppp) = apply_post_processing(
+                                        &settings, &transcription, post_process,
+                                    ).await;
+                                    (transcription, ft, ppt, ppp)
+                                }
+                                Err(err) => {
+                                    error!("Full transcription failed, using streamed text: {}", err);
+                                    (streamed.clone(), streamed.clone(), None, None)
+                                }
+                            }
+                        }
+                    } else {
+                        // No streaming text — do full transcription as usual
+                        let transcription_time = Instant::now();
+                        match tm.transcribe(samples.clone()) {
+                            Ok(transcription) => {
+                                debug!(
+                                    "Transcription completed in {:?}: '{}'",
+                                    transcription_time.elapsed(),
+                                    transcription
+                                );
+                                if transcription.is_empty() {
                                     utils::hide_recording_overlay(&ah);
                                     change_tray_icon(&ah, TrayIconState::Idle);
-                                });
+                                    if let Ok(mut states) = ah.state::<ManagedToggleState>().lock() {
+                                        states.active_toggles.insert(binding_id, false);
+                                    }
+                                    return;
+                                }
+                                let (ft, ppt, ppp) = apply_post_processing(
+                                    &settings, &transcription, post_process,
+                                ).await;
+                                (transcription, ft, ppt, ppp)
                             }
-                        } else {
-                            utils::hide_recording_overlay(&ah);
-                            change_tray_icon(&ah, TrayIconState::Idle);
+                            Err(err) => {
+                                debug!("Global Shortcut Transcription error: {}", err);
+                                utils::hide_recording_overlay(&ah);
+                                change_tray_icon(&ah, TrayIconState::Idle);
+                                if let Ok(mut states) = ah.state::<ManagedToggleState>().lock() {
+                                    states.active_toggles.insert(binding_id, false);
+                                }
+                                return;
+                            }
+                        }
+                    };
+
+                if final_text.is_empty() {
+                    utils::hide_recording_overlay(&ah);
+                    change_tray_icon(&ah, TrayIconState::Idle);
+                    if let Ok(mut states) = ah.state::<ManagedToggleState>().lock() {
+                        states.active_toggles.insert(binding_id, false);
+                    }
+                    return;
+                }
+
+                // Save to history
+                let hm_clone = Arc::clone(&hm);
+                let transcription_for_history = transcription.clone();
+                let pp_text = post_processed_text.clone();
+                let pp_prompt = post_process_prompt.clone();
+                let samples_clone = samples;
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = hm_clone
+                        .save_transcription(
+                            samples_clone,
+                            transcription_for_history,
+                            pp_text,
+                            pp_prompt,
+                        )
+                        .await
+                    {
+                        error!("Failed to save transcription to history: {}", e);
+                    }
+                });
+
+                // Streaming text was shown in overlay only (not typed into active window).
+                // Always do a single paste via clipboard at the end.
+                let settings_for_vc = get_settings(&ah);
+                let voice_commands_enabled = settings_for_vc.voice_commands_enabled;
+
+                let ah_clone = ah.clone();
+                let paste_time = Instant::now();
+
+                // Clone final_text for overlay-done emission after paste
+                let done_text = final_text.clone();
+
+                if voice_commands_enabled {
+                    match voice_commands::check_voice_command(&final_text) {
+                        VoiceCommandResult::Command(cmd) => {
+                            info!(
+                                "Executing voice command: {} (from '{}')",
+                                cmd.description, final_text
+                            );
+                            let action = cmd.action.clone();
+                            ah.run_on_main_thread(move || {
+                                match execute_voice_command(&ah_clone, &action) {
+                                    Ok(()) => debug!(
+                                        "Voice command executed in {:?}",
+                                        paste_time.elapsed()
+                                    ),
+                                    Err(e) => error!(
+                                        "Failed to execute voice command: {}",
+                                        e
+                                    ),
+                                }
+                                // Voice commands: hide overlay (no text to show)
+                                utils::hide_recording_overlay(&ah_clone);
+                                change_tray_icon(&ah_clone, TrayIconState::Idle);
+                            })
+                            .unwrap_or_else(|e| {
+                                error!(
+                                    "Failed to run voice command on main thread: {:?}",
+                                    e
+                                );
+                                utils::hide_recording_overlay(&ah);
+                                change_tray_icon(&ah, TrayIconState::Idle);
+                            });
+                        }
+                        VoiceCommandResult::Text(text) => {
+                            let dt = done_text.clone();
+                            ah.run_on_main_thread(move || {
+                                match utils::paste(text, ah_clone.clone()) {
+                                    Ok(()) => debug!(
+                                        "Text pasted successfully in {:?}",
+                                        paste_time.elapsed()
+                                    ),
+                                    Err(e) => error!(
+                                        "Failed to paste transcription: {}",
+                                        e
+                                    ),
+                                }
+                                // Transition overlay to "done" state with copy/close buttons
+                                crate::overlay::emit_overlay_done(&ah_clone, &dt);
+                                change_tray_icon(&ah_clone, TrayIconState::Idle);
+                            })
+                            .unwrap_or_else(|e| {
+                                error!(
+                                    "Failed to run paste on main thread: {:?}",
+                                    e
+                                );
+                                utils::hide_recording_overlay(&ah);
+                                change_tray_icon(&ah, TrayIconState::Idle);
+                            });
                         }
                     }
-                    Err(err) => {
-                        debug!("Global Shortcut Transcription error: {}", err);
+                } else {
+                    // Voice commands disabled — single paste
+                    ah.run_on_main_thread(move || {
+                        match utils::paste(final_text, ah_clone.clone()) {
+                            Ok(()) => debug!(
+                                "Text pasted successfully in {:?}",
+                                paste_time.elapsed()
+                            ),
+                            Err(e) => error!(
+                                "Failed to paste transcription: {}",
+                                e
+                            ),
+                        }
+                        // Transition overlay to "done" state with copy/close buttons
+                        crate::overlay::emit_overlay_done(&ah_clone, &done_text);
+                        change_tray_icon(&ah_clone, TrayIconState::Idle);
+                    })
+                    .unwrap_or_else(|e| {
+                        error!(
+                            "Failed to run paste on main thread: {:?}",
+                            e
+                        );
                         utils::hide_recording_overlay(&ah);
                         change_tray_icon(&ah, TrayIconState::Idle);
-                    }
+                    });
                 }
             } else {
                 debug!("No samples retrieved from recording stop");
@@ -833,8 +947,8 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         Arc::new(TranscribeAction {
             post_process: false,
             streaming_active: Arc::new(AtomicBool::new(false)),
-            streaming_prev_len: Arc::new(std::sync::Mutex::new(0)),
             streaming_handle: Arc::new(std::sync::Mutex::new(None)),
+            streaming_final_text: Arc::new(std::sync::Mutex::new(None)),
         }) as Arc<dyn ShortcutAction>,
     );
     map.insert(
@@ -842,8 +956,8 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         Arc::new(TranscribeAction {
             post_process: true,
             streaming_active: Arc::new(AtomicBool::new(false)),
-            streaming_prev_len: Arc::new(std::sync::Mutex::new(0)),
             streaming_handle: Arc::new(std::sync::Mutex::new(None)),
+            streaming_final_text: Arc::new(std::sync::Mutex::new(None)),
         }) as Arc<dyn ShortcutAction>,
     );
     map.insert(

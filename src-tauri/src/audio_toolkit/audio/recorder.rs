@@ -20,6 +20,7 @@ enum Cmd {
     Start,
     Stop(mpsc::Sender<Vec<f32>>),
     Peek(mpsc::Sender<Vec<f32>>),
+    PeekFrom(usize, mpsc::Sender<Vec<f32>>),
     Shutdown,
 }
 
@@ -152,6 +153,14 @@ impl AudioRecorder {
         Ok(resp_rx.recv()?)
     }
 
+    pub fn peek_from(&self, offset: usize) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+        let (resp_tx, resp_rx) = mpsc::channel();
+        if let Some(tx) = &self.cmd_tx {
+            tx.send(Cmd::PeekFrom(offset, resp_tx))?;
+        }
+        Ok(resp_rx.recv()?)
+    }
+
     pub fn close(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(tx) = self.cmd_tx.take() {
             let _ = tx.send(Cmd::Shutdown);
@@ -262,6 +271,8 @@ fn run_consumer(
     );
 
     let mut processed_samples = Vec::<f32>::new();
+    // Raw samples (pre-VAD) for streaming peek — always accumulates during recording
+    let mut raw_samples = Vec::<f32>::new();
     let mut recording = false;
 
     // ---------- spectrum visualisation setup ---------------------------- //
@@ -311,6 +322,10 @@ fn run_consumer(
 
         // ---------- existing pipeline ------------------------------------ //
         frame_resampler.push(&raw, &mut |frame: &[f32]| {
+            // Always accumulate raw (pre-VAD) samples for streaming peek
+            if recording {
+                raw_samples.extend_from_slice(frame);
+            }
             handle_frame(frame, recording, &vad, &mut processed_samples)
         });
 
@@ -319,6 +334,7 @@ fn run_consumer(
             match cmd {
                 Cmd::Start => {
                     processed_samples.clear();
+                    raw_samples.clear();
                     recording = true;
                     visualizer.reset(); // Reset visualization buffer
                     if let Some(v) = &vad {
@@ -333,11 +349,17 @@ fn run_consumer(
                         handle_frame(frame, true, &vad, &mut processed_samples)
                     });
 
+                    raw_samples.clear();
                     let _ = reply_tx.send(std::mem::take(&mut processed_samples));
                 }
                 Cmd::Peek(reply_tx) => {
-                    // Clone current samples without stopping recording
-                    let _ = reply_tx.send(processed_samples.clone());
+                    // Return raw (pre-VAD) samples for streaming — always grows
+                    let _ = reply_tx.send(raw_samples.clone());
+                }
+                Cmd::PeekFrom(offset, reply_tx) => {
+                    // Return raw samples from offset onwards (avoids full-buffer clone)
+                    let start = offset.min(raw_samples.len());
+                    let _ = reply_tx.send(raw_samples[start..].to_vec());
                 }
                 Cmd::Shutdown => return,
             }

@@ -414,6 +414,7 @@ impl AudioRecordingManager {
             _ => None,
         }
     }
+    #[allow(dead_code)]
     pub fn peek_samples(&self) -> Option<Vec<f32>> {
         if !*self.is_recording.lock().unwrap() {
             return None;
@@ -423,6 +424,23 @@ impl AudioRecordingManager {
                 Ok(samples) => Some(samples),
                 Err(e) => {
                     error!("peek() failed: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn peek_samples_from(&self, offset: usize) -> Option<Vec<f32>> {
+        if !*self.is_recording.lock().unwrap() {
+            return None;
+        }
+        if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+            match rec.peek_from(offset) {
+                Ok(samples) => Some(samples),
+                Err(e) => {
+                    error!("peek_from() failed: {e}");
                     None
                 }
             }
