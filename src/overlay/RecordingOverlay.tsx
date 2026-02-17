@@ -67,13 +67,21 @@ const RecordingOverlay: React.FC = () => {
         },
       );
 
-      const unlistenDone = await listen<string>("overlay-done", (event) => {
+      const unlistenDone = await listen<string>("overlay-done", async (event) => {
         const finalText = event.payload;
         if (finalText) {
           setStreamingText(finalText);
+          // Auto-copy to clipboard so user can paste immediately with Ctrl+V
+          try {
+            await navigator.clipboard.writeText(finalText);
+            setCopied(true);
+          } catch {
+            setCopied(false);
+          }
+        } else {
+          setCopied(false);
         }
         setState("done");
-        setCopied(false);
       });
 
       return () => {
@@ -123,7 +131,9 @@ const RecordingOverlay: React.FC = () => {
   };
 
   const getIcon = () => {
-    if (state === "recording") {
+    if (isDone && copied) {
+      return <CheckIcon width={18} height={18} />;
+    } else if (state === "recording") {
       return <MicrophoneIcon />;
     } else {
       return <TranscriptionIcon />;
@@ -181,7 +191,7 @@ const RecordingOverlay: React.FC = () => {
             <div
               className="overlay-btn copy-button"
               onClick={handleCopy}
-              title="Copy"
+              title={copied ? t("overlay.copied") : "Copy"}
             >
               {copied ? (
                 <CheckIcon width={16} height={16} />

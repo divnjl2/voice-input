@@ -498,6 +498,7 @@
   },
   "overlay": {
     "transcribing": "Đang chuyển đổi...",
-    "processing": "Đang xử lý..."
+    "processing": "Đang xử lý...",
+    "copied": "Đã sao chép — dán bằng Ctrl+V"
   }
 }

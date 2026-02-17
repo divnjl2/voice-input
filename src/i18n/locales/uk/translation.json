@@ -498,6 +498,7 @@
   },
   "overlay": {
     "transcribing": "Обробка...",
-    "processing": "Обробка..."
+    "processing": "Обробка...",
+    "copied": "Скопійовано — вставте Ctrl+V"
   }
 }

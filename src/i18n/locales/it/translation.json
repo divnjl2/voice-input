@@ -498,6 +498,7 @@
   },
   "overlay": {
     "transcribing": "Trascrizione...",
-    "processing": "Elaborazione..."
+    "processing": "Elaborazione...",
+    "copied": "Copiato — incolla con Ctrl+V"
   }
 }

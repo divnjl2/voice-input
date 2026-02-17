@@ -498,6 +498,7 @@
   },
   "overlay": {
     "transcribing": "...جاري التفريغ",
-    "processing": "جارٍ المعالجة..."
+    "processing": "جارٍ المعالجة...",
+    "copied": "تم النسخ — الصق بـ Ctrl+V"
   }
 }

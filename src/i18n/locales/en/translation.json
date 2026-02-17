@@ -506,6 +506,7 @@
   },
   "overlay": {
     "transcribing": "Transcribing...",
-    "processing": "Processing..."
+    "processing": "Processing...",
+    "copied": "Copied — paste with Ctrl+V"
   }
 }

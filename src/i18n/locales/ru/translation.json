@@ -502,6 +502,7 @@
   },
   "overlay": {
     "transcribing": "Расшифровка...",
-    "processing": "Обработка..."
+    "processing": "Обработка...",
+    "copied": "Скопировано — вставьте Ctrl+V"
   }
 }

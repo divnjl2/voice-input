@@ -498,6 +498,7 @@
   },
   "overlay": {
     "transcribing": "Transkribe ediliyor...",
-    "processing": "İşleniyor..."
+    "processing": "İşleniyor...",
+    "copied": "Kopyalandı — Ctrl+V ile yapıştırın"
   }
 }

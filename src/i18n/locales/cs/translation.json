@@ -498,6 +498,7 @@
   },
   "overlay": {
     "transcribing": "Přepisuji...",
-    "processing": "Zpracování..."
+    "processing": "Zpracování...",
+    "copied": "Zkopírováno — vložte Ctrl+V"
   }
 }

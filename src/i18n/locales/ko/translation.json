@@ -498,6 +498,7 @@
   },
   "overlay": {
     "transcribing": "텍스트로 변환 중...",
-    "processing": "처리 중..."
+    "processing": "처리 중...",
+    "copied": "복사됨 — Ctrl+V로 붙여넣기"
   }
 }

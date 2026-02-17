@@ -498,6 +498,7 @@
   },
   "overlay": {
     "transcribing": "文字起こし中...",
-    "processing": "処理中..."
+    "processing": "処理中...",
+    "copied": "コピー済み — Ctrl+Vで貼り付け"
   }
 }
