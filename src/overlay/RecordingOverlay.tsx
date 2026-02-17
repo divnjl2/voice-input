@@ -13,7 +13,7 @@ import { commands } from "@/bindings";
 import i18n, { syncLanguageFromSettings } from "@/i18n";
 import { getLanguageDirection } from "@/lib/utils/rtl";
 
-type OverlayState = "recording" | "transcribing" | "done";
+type OverlayState = "recording" | "transcribing" | "processing" | "done";
 
 const RecordingOverlay: React.FC = () => {
   const { t } = useTranslation();
@@ -132,6 +132,7 @@ const RecordingOverlay: React.FC = () => {
 
   const hasStreamingText = streamingText.length > 0;
   const isTranscribing = state === "transcribing";
+  const isProcessing = state === "processing";
   const isDone = state === "done";
 
   return (
@@ -159,20 +160,22 @@ const RecordingOverlay: React.FC = () => {
         )}
         {hasStreamingText && (
           <div
-            className={`streaming-text ${isTranscribing ? "processing" : ""}`}
+            className={`streaming-text ${isTranscribing || isProcessing ? "processing" : ""}`}
           >
             {streamingText}
           </div>
         )}
-        {isTranscribing && !hasStreamingText && (
-          <div className="transcribing-text">{t("overlay.transcribing")}</div>
+        {(isTranscribing || isProcessing) && !hasStreamingText && (
+          <div className="transcribing-text">
+            {isProcessing ? t("overlay.processing") : t("overlay.transcribing")}
+          </div>
         )}
       </div>
 
       <div className="overlay-right">
         {hasStreamingText ? (
           <div className="done-buttons">
-            {isTranscribing && (
+            {(isTranscribing || isProcessing) && (
               <div className="processing-indicator" />
             )}
             <div

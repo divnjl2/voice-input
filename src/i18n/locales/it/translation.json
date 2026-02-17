@@ -5,7 +5,8 @@
     "copyLastTranscript": "Copia l'ultima trascrizione",
     "quit": "Esci",
     "cancel": "Annulla",
-    "showHide": "Mostra/Nascondi finestra"
+    "showHide": "Mostra/Nascondi finestra",
+    "unloadModel": "Scarica modello"
   },
   "sidebar": {
     "general": "Generale",
@@ -496,6 +497,7 @@
     "description": "Cambia la lingua dell'interfaccia di Voice Input"
   },
   "overlay": {
-    "transcribing": "Trascrizione..."
+    "transcribing": "Trascrizione...",
+    "processing": "Elaborazione..."
   }
 }

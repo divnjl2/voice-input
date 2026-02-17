@@ -5,7 +5,8 @@
     "copyLastTranscript": "最新の文字起こしをコピー",
     "quit": "終了",
     "cancel": "キャンセル",
-    "showHide": "ウィンドウの表示/非表示"
+    "showHide": "ウィンドウの表示/非表示",
+    "unloadModel": "モデルをアンロード"
   },
   "sidebar": {
     "general": "一般",
@@ -496,6 +497,7 @@
     "description": "Voice Inputインターフェースの言語を変更"
   },
   "overlay": {
-    "transcribing": "文字起こし中..."
+    "transcribing": "文字起こし中...",
+    "processing": "処理中..."
   }
 }

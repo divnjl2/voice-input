@@ -1,7 +1,5 @@
 #[cfg(unix)]
-use crate::actions::ACTION_MAP;
-#[cfg(unix)]
-use crate::ManagedToggleState;
+use crate::TranscriptionCoordinator;
 #[cfg(unix)]
 use log::{debug, info, warn};
 #[cfg(unix)]
@@ -10,68 +8,28 @@ use std::thread;
 use tauri::{AppHandle, Manager};
 
 #[cfg(unix)]
-use signal_hook::consts::SIGUSR2;
+use signal_hook::consts::{SIGUSR1, SIGUSR2};
 #[cfg(unix)]
 use signal_hook::iterator::Signals;
 
 #[cfg(unix)]
 pub fn setup_signal_handler(app_handle: AppHandle, mut signals: Signals) {
-    let app_handle_for_signal = app_handle.clone();
-
-    debug!("SIGUSR2 signal handler registered successfully");
+    debug!("Signal handler registered for SIGUSR1 and SIGUSR2");
     thread::spawn(move || {
-        debug!("SIGUSR2 signal handler thread started");
+        debug!("Signal handler thread started");
         for sig in signals.forever() {
-            match sig {
-                SIGUSR2 => {
-                    debug!("Received SIGUSR2 signal (signal number: {sig})");
+            let (binding_id, signal_name) = match sig {
+                SIGUSR2 => ("transcribe", "SIGUSR2"),
+                SIGUSR1 => ("transcribe_with_post_process", "SIGUSR1"),
+                _ => continue,
+            };
+            debug!("Received {signal_name} signal");
 
-                    let binding_id = "transcribe";
-                    let shortcut_string = "SIGUSR2";
-
-                    if let Some(action) = ACTION_MAP.get(binding_id) {
-                        // Determine action and update state while holding the lock,
-                        // but RELEASE the lock before calling the action to avoid deadlocks.
-                        // (Actions may need to acquire the lock themselves, e.g., cancel_current_operation)
-                        let should_start: bool;
-                        {
-                            let toggle_state_manager =
-                                app_handle_for_signal.state::<ManagedToggleState>();
-
-                            let mut states = match toggle_state_manager.lock() {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    warn!("Failed to lock toggle state manager: {e}");
-                                    continue;
-                                }
-                            };
-
-                            let is_currently_active = states
-                                .active_toggles
-                                .entry(binding_id.to_string())
-                                .or_insert(false);
-
-                            should_start = !*is_currently_active;
-                            if should_start {
-                                *is_currently_active = true;
-                            }
-                        } // Lock released here
-
-                        // Now call the action without holding the lock
-                        if should_start {
-                            debug!("SIGUSR2: Starting transcription (was inactive)");
-                            action.start(&app_handle_for_signal, binding_id, shortcut_string);
-                            info!("SIGUSR2: Transcription started");
-                        } else {
-                            debug!("SIGUSR2: Stopping transcription (was active)");
-                            action.stop(&app_handle_for_signal, binding_id, shortcut_string);
-                            debug!("SIGUSR2: Transcription stopped");
-                        }
-                    } else {
-                        warn!("No action defined in ACTION_MAP for binding ID '{binding_id}'");
-                    }
-                }
-                _ => unreachable!(),
+            if let Some(coordinator) = app_handle.try_state::<TranscriptionCoordinator>() {
+                coordinator.send_input(binding_id, signal_name, true, false);
+                info!("{signal_name}: sent toggle to coordinator for '{binding_id}'");
+            } else {
+                warn!("TranscriptionCoordinator is not initialized");
             }
         }
     });

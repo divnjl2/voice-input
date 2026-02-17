@@ -5,7 +5,8 @@
     "copyLastTranscript": "Скопировать последнюю транскрипцию",
     "quit": "Выход",
     "cancel": "Отмена",
-    "showHide": "Показать/Скрыть окно"
+    "showHide": "Показать/Скрыть окно",
+    "unloadModel": "Выгрузить модель"
   },
   "sidebar": {
     "general": "Общие",
@@ -500,6 +501,7 @@
     "description": "Изменить язык интерфейса Voice Input"
   },
   "overlay": {
-    "transcribing": "Расшифровка..."
+    "transcribing": "Расшифровка...",
+    "processing": "Обработка..."
   }
 }

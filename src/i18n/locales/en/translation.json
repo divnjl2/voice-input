@@ -3,6 +3,7 @@
     "settings": "Settings...",
     "checkUpdates": "Check for Updates...",
     "copyLastTranscript": "Copy Last Transcript",
+    "unloadModel": "Unload Model",
     "quit": "Quit",
     "cancel": "Cancel",
     "showHide": "Show/Hide Window"
@@ -504,6 +505,7 @@
     "description": "Change the language of the Voice Input interface"
   },
   "overlay": {
-    "transcribing": "Transcribing..."
+    "transcribing": "Transcribing...",
+    "processing": "Processing..."
   }
 }

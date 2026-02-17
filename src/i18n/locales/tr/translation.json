@@ -5,7 +5,8 @@
     "copyLastTranscript": "Son transkripti kopyala",
     "quit": "Çıkış",
     "cancel": "İptal",
-    "showHide": "Pencereyi Göster/Gizle"
+    "showHide": "Pencereyi Göster/Gizle",
+    "unloadModel": "Modeli kaldır"
   },
   "sidebar": {
     "general": "Genel",
@@ -496,6 +497,7 @@
     "description": "Voice Input arayüzünün dilini değiştirin"
   },
   "overlay": {
-    "transcribing": "Transkribe ediliyor..."
+    "transcribing": "Transkribe ediliyor...",
+    "processing": "İşleniyor..."
   }
 }

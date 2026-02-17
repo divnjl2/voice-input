@@ -5,7 +5,8 @@
     "copyLastTranscript": "Zkopírovat poslední přepis",
     "quit": "Ukončit",
     "cancel": "Zrušit",
-    "showHide": "Zobrazit/Skrýt okno"
+    "showHide": "Zobrazit/Skrýt okno",
+    "unloadModel": "Uvolnit model"
   },
   "sidebar": {
     "general": "Obecné",
@@ -496,6 +497,7 @@
     "description": "Změňte jazyk rozhraní Voice Input"
   },
   "overlay": {
-    "transcribing": "Přepisuji..."
+    "transcribing": "Přepisuji...",
+    "processing": "Zpracování..."
   }
 }

@@ -5,7 +5,8 @@
     "copyLastTranscript": "Kopiuj ostatnią transkrypcję",
     "quit": "Zamknij",
     "cancel": "Anuluj",
-    "showHide": "Pokaż/Ukryj okno"
+    "showHide": "Pokaż/Ukryj okno",
+    "unloadModel": "Zwolnij model"
   },
   "sidebar": {
     "general": "Ogólne",
@@ -496,6 +497,7 @@
     "description": "Zmień język interfejsu Voice Input"
   },
   "overlay": {
-    "transcribing": "Transkrypcja..."
+    "transcribing": "Transkrypcja...",
+    "processing": "Przetwarzanie..."
   }
 }

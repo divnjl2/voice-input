@@ -5,7 +5,8 @@
     "copyLastTranscript": "Copier la dernière transcription",
     "quit": "Quitter",
     "cancel": "Annuler",
-    "showHide": "Afficher/Masquer la fenêtre"
+    "showHide": "Afficher/Masquer la fenêtre",
+    "unloadModel": "Décharger le modèle"
   },
   "sidebar": {
     "general": "Général",
@@ -496,6 +497,7 @@
     "description": "Changer la langue de l'interface de Voice Input"
   },
   "overlay": {
-    "transcribing": "Transcription..."
+    "transcribing": "Transcription...",
+    "processing": "Traitement..."
   }
 }

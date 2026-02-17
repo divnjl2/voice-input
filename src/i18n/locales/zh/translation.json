@@ -5,7 +5,8 @@
     "copyLastTranscript": "复制最新转录",
     "quit": "退出",
     "cancel": "取消",
-    "showHide": "显示/隐藏窗口"
+    "showHide": "显示/隐藏窗口",
+    "unloadModel": "卸载模型"
   },
   "sidebar": {
     "general": "通用",
@@ -496,6 +497,7 @@
     "description": "更改 Voice Input 界面的语言"
   },
   "overlay": {
-    "transcribing": "正在转录..."
+    "transcribing": "正在转录...",
+    "processing": "处理中..."
   }
 }
