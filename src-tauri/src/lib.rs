@@ -171,8 +171,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
                         let _ = main_window.hide();
                         #[cfg(target_os = "macos")]
                         {
-                            let _ = app
-                                .set_activation_policy(tauri::ActivationPolicy::Accessory);
+                            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                         }
                     } else {
                         show_main_window(app);

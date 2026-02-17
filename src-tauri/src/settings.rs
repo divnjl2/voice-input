@@ -801,7 +801,9 @@ mod tests {
     fn test_default_settings_has_required_bindings() {
         let settings = get_default_settings();
         assert!(settings.bindings.contains_key("transcribe"));
-        assert!(settings.bindings.contains_key("transcribe_with_post_process"));
+        assert!(settings
+            .bindings
+            .contains_key("transcribe_with_post_process"));
         assert!(settings.bindings.contains_key("toggle_settings"));
         assert!(settings.bindings.contains_key("cancel"));
     }
@@ -947,12 +949,24 @@ mod tests {
 
     #[test]
     fn test_sound_theme_paths() {
-        assert_eq!(SoundTheme::Marimba.to_start_path(), "resources/marimba_start.wav");
-        assert_eq!(SoundTheme::Marimba.to_stop_path(), "resources/marimba_stop.wav");
+        assert_eq!(
+            SoundTheme::Marimba.to_start_path(),
+            "resources/marimba_start.wav"
+        );
+        assert_eq!(
+            SoundTheme::Marimba.to_stop_path(),
+            "resources/marimba_stop.wav"
+        );
         assert_eq!(SoundTheme::Pop.to_start_path(), "resources/pop_start.wav");
         assert_eq!(SoundTheme::Pop.to_stop_path(), "resources/pop_stop.wav");
-        assert_eq!(SoundTheme::Custom.to_start_path(), "resources/custom_start.wav");
-        assert_eq!(SoundTheme::Custom.to_stop_path(), "resources/custom_stop.wav");
+        assert_eq!(
+            SoundTheme::Custom.to_start_path(),
+            "resources/custom_start.wav"
+        );
+        assert_eq!(
+            SoundTheme::Custom.to_stop_path(),
+            "resources/custom_stop.wav"
+        );
     }
 
     // ── PasteMethod Default ─────────────────────────────────────────
@@ -1030,15 +1044,16 @@ mod tests {
     fn test_ensure_post_process_defaults_adds_missing_provider() {
         let mut settings = get_default_settings();
         // Remove one provider
-        settings
-            .post_process_providers
-            .retain(|p| p.id != "groq");
+        settings.post_process_providers.retain(|p| p.id != "groq");
         settings.post_process_api_keys.remove("groq");
         settings.post_process_models.remove("groq");
 
         let changed = ensure_post_process_defaults(&mut settings);
         assert!(changed);
-        assert!(settings.post_process_providers.iter().any(|p| p.id == "groq"));
+        assert!(settings
+            .post_process_providers
+            .iter()
+            .any(|p| p.id == "groq"));
         assert!(settings.post_process_api_keys.contains_key("groq"));
         assert!(settings.post_process_models.contains_key("groq"));
     }
@@ -1053,7 +1068,8 @@ mod tests {
         let json = serde_json::to_value(OverlayPosition::None).unwrap();
         assert_eq!(json, serde_json::json!("none"));
 
-        let deserialized: OverlayPosition = serde_json::from_value(serde_json::json!("bottom")).unwrap();
+        let deserialized: OverlayPosition =
+            serde_json::from_value(serde_json::json!("bottom")).unwrap();
         assert_eq!(deserialized, OverlayPosition::Bottom);
     }
 

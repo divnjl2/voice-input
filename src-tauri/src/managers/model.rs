@@ -37,8 +37,8 @@ fn to_safe_model_path(path: &std::path::Path) -> PathBuf {
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
 
     unsafe {
-        use windows::Win32::Storage::FileSystem::GetShortPathNameW;
         use windows::core::PCWSTR;
+        use windows::Win32::Storage::FileSystem::GetShortPathNameW;
 
         // First call to get required buffer size
         let len = GetShortPathNameW(PCWSTR(wide.as_ptr()), None);
@@ -55,8 +55,7 @@ fn to_safe_model_path(path: &std::path::Path) -> PathBuf {
         }
 
         // Trim null terminator and convert back
-        let short_path =
-            String::from_utf16_lossy(&buf[..result as usize]);
+        let short_path = String::from_utf16_lossy(&buf[..result as usize]);
         let short = PathBuf::from(short_path);
         info!("Converted to short path: {:?}", short);
         short

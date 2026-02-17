@@ -142,48 +142,28 @@ static COMMAND_MAP: Lazy<HashMap<String, VoiceCommand>> = Lazy::new(|| {
 
     // ── Delete ────────────────────────────────────────────────────────
     add(
-        &[
-            "delete",
-            "удали",
-            "удалить",
-        ],
+        &["delete", "удали", "удалить"],
         VoiceAction::KeyPress(KeyAction::Delete),
         "Delete",
     );
 
     // ── Tab ───────────────────────────────────────────────────────────
     add(
-        &[
-            "tab",
-            "press tab",
-            "таб",
-            "табуляция",
-            "нажми таб",
-        ],
+        &["tab", "press tab", "таб", "табуляция", "нажми таб"],
         VoiceAction::KeyPress(KeyAction::Tab),
         "Tab",
     );
 
     // ── Escape ────────────────────────────────────────────────────────
     add(
-        &[
-            "escape",
-            "cancel",
-            "эскейп",
-            "отмена",
-        ],
+        &["escape", "cancel", "эскейп", "отмена"],
         VoiceAction::KeyPress(KeyAction::Escape),
         "Escape",
     );
 
     // ── Space ─────────────────────────────────────────────────────────
     add(
-        &[
-            "space",
-            "press space",
-            "пробел",
-            "нажми пробел",
-        ],
+        &["space", "press space", "пробел", "нажми пробел"],
         VoiceAction::KeyPress(KeyAction::Space),
         "Space",
     );
@@ -231,26 +211,14 @@ static COMMAND_MAP: Lazy<HashMap<String, VoiceCommand>> = Lazy::new(|| {
 
     // ── Undo (Ctrl+Z) ───────────────────────────────────────────────
     add(
-        &[
-            "undo",
-            "отмени",
-            "отменить",
-            "назад",
-            "ctrl z",
-        ],
+        &["undo", "отмени", "отменить", "назад", "ctrl z"],
         VoiceAction::KeyCombo(vec![KeyAction::Control, KeyAction::Key('z')]),
         "Undo (Ctrl+Z)",
     );
 
     // ── Redo (Ctrl+Y / Ctrl+Shift+Z) ────────────────────────────────
     add(
-        &[
-            "redo",
-            "повтори",
-            "повторить",
-            "вперед",
-            "вперёд",
-        ],
+        &["redo", "повтори", "повторить", "вперед", "вперёд"],
         VoiceAction::KeyCombo(vec![KeyAction::Control, KeyAction::Key('y')]),
         "Redo (Ctrl+Y)",
     );
@@ -271,36 +239,21 @@ static COMMAND_MAP: Lazy<HashMap<String, VoiceCommand>> = Lazy::new(|| {
 
     // ── Cut (Ctrl+X) ────────────────────────────────────────────────
     add(
-        &[
-            "cut",
-            "cut that",
-            "вырежи",
-            "вырезать",
-        ],
+        &["cut", "cut that", "вырежи", "вырезать"],
         VoiceAction::KeyCombo(vec![KeyAction::Control, KeyAction::Key('x')]),
         "Cut (Ctrl+X)",
     );
 
     // ── Paste (Ctrl+V) ──────────────────────────────────────────────
     add(
-        &[
-            "paste",
-            "paste that",
-            "вставь",
-            "вставить",
-        ],
+        &["paste", "paste that", "вставь", "вставить"],
         VoiceAction::KeyCombo(vec![KeyAction::Control, KeyAction::Key('v')]),
         "Paste (Ctrl+V)",
     );
 
     // ── Save (Ctrl+S) ───────────────────────────────────────────────
     add(
-        &[
-            "save",
-            "save file",
-            "сохрани",
-            "сохранить",
-        ],
+        &["save", "save file", "сохрани", "сохранить"],
         VoiceAction::KeyCombo(vec![KeyAction::Control, KeyAction::Key('s')]),
         "Save (Ctrl+S)",
     );
@@ -364,11 +317,7 @@ static COMMAND_MAP: Lazy<HashMap<String, VoiceCommand>> = Lazy::new(|| {
         "Comma (,)",
     );
     add(
-        &[
-            "question mark",
-            "вопросительный знак",
-            "знак вопроса",
-        ],
+        &["question mark", "вопросительный знак", "знак вопроса"],
         VoiceAction::TypeText("?".to_string()),
         "Question Mark (?)",
     );

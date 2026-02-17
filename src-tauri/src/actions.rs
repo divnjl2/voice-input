@@ -7,7 +7,9 @@ use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{get_settings, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
-use crate::utils::{self, show_processing_overlay, show_recording_overlay, show_transcribing_overlay};
+use crate::utils::{
+    self, show_processing_overlay, show_recording_overlay, show_transcribing_overlay,
+};
 use crate::voice_commands::{self, KeyAction, VoiceAction, VoiceCommandResult};
 use crate::TranscriptionCoordinator;
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
@@ -400,7 +402,10 @@ fn streaming_transcription_loop(
     // Check flag every 50ms so we can exit quickly if recording stops
     for i in 0..24 {
         if !active.load(Ordering::SeqCst) {
-            info!("Streaming loop: cancelled during initial delay (after {}ms)", i * 50);
+            info!(
+                "Streaming loop: cancelled during initial delay (after {}ms)",
+                i * 50
+            );
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -461,7 +466,8 @@ fn streaming_transcription_loop(
                         // Finalize chunk when:
                         // 1. Audio exceeds window and text is stable, OR
                         // 2. Audio exceeds force limit (prevents unbounded growth)
-                        let should_finalize = (chunk_len >= MAX_CHUNK_SAMPLES && stable_count >= STABILIZE_ITERS)
+                        let should_finalize = (chunk_len >= MAX_CHUNK_SAMPLES
+                            && stable_count >= STABILIZE_ITERS)
                             || chunk_len >= FORCE_FINALIZE_SAMPLES;
                         if should_finalize {
                             info!(
@@ -480,10 +486,7 @@ fn streaming_transcription_loop(
 
                         // Show streaming text in overlay (not typed into active window)
                         if full_text != prev_displayed {
-                            debug!(
-                                "Streaming loop: overlay display '{}'",
-                                full_text
-                            );
+                            debug!("Streaming loop: overlay display '{}'", full_text);
                             crate::overlay::emit_streaming_text(&app, &full_text);
                             prev_displayed = full_text;
                         } else {
@@ -522,8 +525,13 @@ fn streaming_transcription_loop(
         );
         *final_text_out.lock().unwrap() = Some(prev_displayed);
     }
-    info!("Streaming loop: exited (finalized {} chunks, offset {})",
-        if finalized_offset > 0 { finalized_offset / (MAX_CHUNK_SAMPLES.max(1)) + 1 } else { 0 },
+    info!(
+        "Streaming loop: exited (finalized {} chunks, offset {})",
+        if finalized_offset > 0 {
+            finalized_offset / (MAX_CHUNK_SAMPLES.max(1)) + 1
+        } else {
+            0
+        },
         finalized_offset,
     );
 }
@@ -670,8 +678,8 @@ impl ShortcutAction for TranscribeAction {
                 // Decide whether we need a full re-transcription.
                 // If streaming already produced text and no post-processing is needed,
                 // we can skip the expensive full transcription and use the streamed result.
-                let needs_post_processing = post_process
-                    || maybe_needs_chinese_conversion(&settings);
+                let needs_post_processing =
+                    post_process || maybe_needs_chinese_conversion(&settings);
 
                 let (transcription, final_text, post_processed_text, post_process_prompt) =
                     if let Some(ref streamed) = streamed_text {
@@ -701,12 +709,18 @@ impl ShortcutAction for TranscribeAction {
                                         transcription
                                     );
                                     let (ft, ppt, ppp) = apply_post_processing(
-                                        &settings, &transcription, post_process,
-                                    ).await;
+                                        &settings,
+                                        &transcription,
+                                        post_process,
+                                    )
+                                    .await;
                                     (transcription, ft, ppt, ppp)
                                 }
                                 Err(err) => {
-                                    error!("Full transcription failed, using streamed text: {}", err);
+                                    error!(
+                                        "Full transcription failed, using streamed text: {}",
+                                        err
+                                    );
                                     (streamed.clone(), streamed.clone(), None, None)
                                 }
                             }
@@ -729,9 +743,9 @@ impl ShortcutAction for TranscribeAction {
                                 if post_process {
                                     show_processing_overlay(&ah);
                                 }
-                                let (ft, ppt, ppp) = apply_post_processing(
-                                    &settings, &transcription, post_process,
-                                ).await;
+                                let (ft, ppt, ppp) =
+                                    apply_post_processing(&settings, &transcription, post_process)
+                                        .await;
                                 (transcription, ft, ppt, ppp)
                             }
                             Err(err) => {
@@ -794,20 +808,14 @@ impl ShortcutAction for TranscribeAction {
                                         "Voice command executed in {:?}",
                                         paste_time.elapsed()
                                     ),
-                                    Err(e) => error!(
-                                        "Failed to execute voice command: {}",
-                                        e
-                                    ),
+                                    Err(e) => error!("Failed to execute voice command: {}", e),
                                 }
                                 // Voice commands: hide overlay (no text to show)
                                 utils::hide_recording_overlay(&ah_clone);
                                 change_tray_icon(&ah_clone, TrayIconState::Idle);
                             })
                             .unwrap_or_else(|e| {
-                                error!(
-                                    "Failed to run voice command on main thread: {:?}",
-                                    e
-                                );
+                                error!("Failed to run voice command on main thread: {:?}", e);
                                 utils::hide_recording_overlay(&ah);
                                 change_tray_icon(&ah, TrayIconState::Idle);
                             });
@@ -820,20 +828,14 @@ impl ShortcutAction for TranscribeAction {
                                         "Text pasted successfully in {:?}",
                                         paste_time.elapsed()
                                     ),
-                                    Err(e) => error!(
-                                        "Failed to paste transcription: {}",
-                                        e
-                                    ),
+                                    Err(e) => error!("Failed to paste transcription: {}", e),
                                 }
                                 // Transition overlay to "done" state with copy/close buttons
                                 crate::overlay::emit_overlay_done(&ah_clone, &dt);
                                 change_tray_icon(&ah_clone, TrayIconState::Idle);
                             })
                             .unwrap_or_else(|e| {
-                                error!(
-                                    "Failed to run paste on main thread: {:?}",
-                                    e
-                                );
+                                error!("Failed to run paste on main thread: {:?}", e);
                                 utils::hide_recording_overlay(&ah);
                                 change_tray_icon(&ah, TrayIconState::Idle);
                             });
@@ -843,24 +845,17 @@ impl ShortcutAction for TranscribeAction {
                     // Voice commands disabled — single paste
                     ah.run_on_main_thread(move || {
                         match utils::paste(final_text, ah_clone.clone()) {
-                            Ok(()) => debug!(
-                                "Text pasted successfully in {:?}",
-                                paste_time.elapsed()
-                            ),
-                            Err(e) => error!(
-                                "Failed to paste transcription: {}",
-                                e
-                            ),
+                            Ok(()) => {
+                                debug!("Text pasted successfully in {:?}", paste_time.elapsed())
+                            }
+                            Err(e) => error!("Failed to paste transcription: {}", e),
                         }
                         // Transition overlay to "done" state with copy/close buttons
                         crate::overlay::emit_overlay_done(&ah_clone, &done_text);
                         change_tray_icon(&ah_clone, TrayIconState::Idle);
                     })
                     .unwrap_or_else(|e| {
-                        error!(
-                            "Failed to run paste on main thread: {:?}",
-                            e
-                        );
+                        error!("Failed to run paste on main thread: {:?}", e);
                         utils::hide_recording_overlay(&ah);
                         change_tray_icon(&ah, TrayIconState::Idle);
                     });

@@ -390,11 +390,9 @@ impl TranscriptionManager {
                         .transcribe_samples(audio, Some(params))
                         .map_err(|e| anyhow::anyhow!("Whisper transcription failed: {}", e))?
                 }
-                LoadedEngine::Parakeet(parakeet_engine) => {
-                    parakeet_engine
-                        .transcribe_samples(audio, None)
-                        .map_err(|e| anyhow::anyhow!("Parakeet transcription failed: {}", e))?
-                }
+                LoadedEngine::Parakeet(parakeet_engine) => parakeet_engine
+                    .transcribe_samples(audio, None)
+                    .map_err(|e| anyhow::anyhow!("Parakeet transcription failed: {}", e))?,
             }
         };
 

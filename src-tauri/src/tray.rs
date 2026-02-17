@@ -135,9 +135,8 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
     .expect("failed to create unload model item");
     let quit_i = MenuItem::with_id(app, "quit", &strings.quit, true, quit_accelerator)
         .expect("failed to create quit item");
-    let show_hide_i =
-        MenuItem::with_id(app, "show_hide", &strings.show_hide, true, None::<&str>)
-            .expect("failed to create show/hide item");
+    let show_hide_i = MenuItem::with_id(app, "show_hide", &strings.show_hide, true, None::<&str>)
+        .expect("failed to create show/hide item");
     let separator = || PredefinedMenuItem::separator(app).expect("failed to create separator");
 
     let menu = match state {

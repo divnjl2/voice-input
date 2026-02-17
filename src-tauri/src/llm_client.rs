@@ -212,14 +212,8 @@ mod tests {
         let provider = make_provider("openai", "https://api.openai.com/v1");
         let headers = build_headers(&provider, "sk-test123").unwrap();
 
-        assert_eq!(
-            headers.get("content-type").unwrap(),
-            "application/json"
-        );
-        assert_eq!(
-            headers.get("authorization").unwrap(),
-            "Bearer sk-test123"
-        );
+        assert_eq!(headers.get("content-type").unwrap(), "application/json");
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer sk-test123");
         // Should NOT have x-api-key header for OpenAI
         assert!(headers.get("x-api-key").is_none());
     }
@@ -229,14 +223,8 @@ mod tests {
         let provider = make_provider("anthropic", "https://api.anthropic.com/v1");
         let headers = build_headers(&provider, "sk-ant-test").unwrap();
 
-        assert_eq!(
-            headers.get("x-api-key").unwrap(),
-            "sk-ant-test"
-        );
-        assert_eq!(
-            headers.get("anthropic-version").unwrap(),
-            "2023-06-01"
-        );
+        assert_eq!(headers.get("x-api-key").unwrap(), "sk-ant-test");
+        assert_eq!(headers.get("anthropic-version").unwrap(), "2023-06-01");
         // Should NOT have authorization header for Anthropic
         assert!(headers.get("authorization").is_none());
     }
